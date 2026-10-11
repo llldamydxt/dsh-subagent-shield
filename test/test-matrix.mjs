@@ -423,6 +423,80 @@ try {
     check('M9 ★ 真没设归属时才说"没设归属"',
       /没设归属/.test(String(call(`${ARM_B}\\out.json`, WIN_A, R_B_NOOWNER)?.reason ?? '')),
       String(call(`${ARM_B}\\out.json`, WIN_A, R_B_NOOWNER)?.reason ?? '').slice(0, 80))
+  // ★★ 「谁写的谁拥有」——自动臂间隔离
+  //    为什么需要：protectedPaths 要求先知道"哪个目录归哪个臂"（还要每臂一个子目录）；
+  //    而这个功能的用法是"随手建个文件夹、开个窗口、派两个子代理各做一遍"，那时没人愿意先配规则。
+  console.log('\n── M10 谁写的谁拥有（自动臂间隔离）')
+  {
+    const P1 = 'C:\\lab\\out\\a.js'
+    const P2 = 'C:\\lab\\out\\b.js'
+    const OWN = {
+      version: 1, shared: [],
+      owned: { [mod.normalizePath(P1)]: { by: 'sub-a', label: '臂A', ts: '2026-10-11T00:00:00Z' } },
+    }
+    const call = (file, who, extra = {}) => mod.evaluateCall({
+      name: 'read', args: { file_path: file }, isSubagent: true, scope: 'subagents',
+      home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true,
+      autoOwnWrites: true, ownState: OWN, ...who, ...extra,
+    })
+
+    check('M10 ★ 别的子代理读它写出的文件 → 拦', call(P1, { caller: 'sub-b' })?.kind === 'owned',
+      JSON.stringify(call(P1, { caller: 'sub-b' })?.reason ?? '').slice(0, 70))
+    check('M10 ★ 它自己读 → 放行', !call(P1, { caller: 'sub-a' }))
+    check('M10 没登记过的文件 → 放行（父会话写的都算公共）', !call(P2, { caller: 'sub-b' }))
+    check('M10 ★ 拒绝文案里直接给出逃生门', /shield 放行/.test(String(call(P1, { caller: 'sub-b' })?.reason ?? '')))
+    check('M10 手动放行（目录级）之后 → 放行',
+      !call(P1, { caller: 'sub-b' }, { ownState: { version: 1, owned: OWN.owned, shared: ['C:\\lab\\out'] } }))
+    check('M10 关掉开关就不管', !call(P1, { caller: 'sub-b' }, { autoOwnWrites: false }))
+    check('M10 父会话不受影响（审计通道）',
+      !mod.evaluateCall({
+        name: 'read', args: { file_path: P1 }, isSubagent: false, scope: 'subagents',
+        home: HOME, auditFile: '', rules: {}, cats: {}, autoOwnWrites: true, ownState: OWN, caller: null,
+      }))
+    check('M10 大小写 / 正斜杠变体照样命中', call('c:/LAB/OUT/A.js', { caller: 'sub-b' })?.kind === 'owned')
+
+    // 写入要登记
+    const st = { version: 1, owned: {}, shared: [] }
+    mod.evaluateCall({
+      name: 'write', args: { file_path: P2, content: 'x' }, isSubagent: true, scope: 'subagents',
+      home: HOME, auditFile: '', rules: {}, cats: {}, autoOwnWrites: true, ownState: st,
+      caller: 'sub-b', label: '臂B',
+    })
+    const rec = st.owned[mod.normalizePath(P2)]
+    check('M10 ★ write 之后自动登记到它名下（带标签）',
+      rec?.by === 'sub-b' && rec?.label === '臂B', JSON.stringify(rec ?? null))
+    mod.evaluateCall({
+      name: 'edit', args: { file_path: P2, old_string: 'a', new_string: 'b' }, isSubagent: true, scope: 'subagents',
+      home: HOME, auditFile: '', rules: {}, cats: {}, autoOwnWrites: true, ownState: st,
+      caller: 'sub-b', label: '臂B',
+    })
+    check('M10 edit 也算写入（不会因为改自己的文件被拦）', Object.keys(st.owned).length === 1)
+
+    // 列目录类：产物挤在同一个目录里时，列一下就能看到别人有哪些文件
+    const g = (dir, who, extra = {}) => mod.evaluateCall({
+      name: 'glob', args: { path: dir, pattern: '**/*.js' }, isSubagent: true, scope: 'subagents',
+      home: HOME, auditFile: '', rules: {}, cats: {}, autoOwnWrites: true, ownState: OWN, ...who, ...extra,
+    })
+    check('M10 ★ glob 一个"里面有别人产物"的目录 → 拦', g('C:\\lab\\out', { caller: 'sub-b' })?.kind === 'owned')
+    check('M10 glob 自己那个目录 → 放行（里面是自己写的）', !g('C:\\lab\\out', { caller: 'sub-a' }))
+    check('M10 glob 无关目录 → 放行', !g('C:\\lab\\other', { caller: 'sub-b' }))
+    const gr = (dir, who) => mod.evaluateCall({
+      name: 'grep', args: { path: dir, pattern: 'secret' }, isSubagent: true, scope: 'subagents',
+      home: HOME, auditFile: '', rules: {}, cats: {}, autoOwnWrites: true, ownState: OWN, ...who,
+    })
+    check('M10 grep 同样管（不然搜一下就抄到了）', gr('C:\\lab\\out', { caller: 'sub-b' })?.kind === 'owned')
+
+    // 纯函数直接行为
+    check('M10 ★ 三个纯函数各自成立',
+      mod.isForeignOwned(OWN, mod.normalizePath(P1), { callerId: 'sub-b' }) !== null &&
+      mod.isForeignOwned(OWN, mod.normalizePath(P1), { callerId: 'sub-a' }) === null &&
+      mod.isForeignOwned(OWN, mod.normalizePath(P1), { callerId: 'sub-b' })?.label === '臂A' &&
+      mod.isShared({ shared: ['C:\\lab\\out'] }, mod.normalizePath(P1)) === true &&
+      mod.isShared({ shared: ['C:\\lab\\out'] }, mod.normalizePath('C:\\labother\\x.js')) === false &&
+      mod.dirHasForeignOwned(OWN, 'c:\\lab\\out', { callerId: 'sub-b' }) !== null &&
+      mod.dirHasForeignOwned(OWN, 'c:\\lab', { callerId: 'sub-b' }) === null)   // 只看直接子项
+  }
+
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)

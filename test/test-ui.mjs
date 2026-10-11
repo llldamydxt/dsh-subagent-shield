@@ -572,6 +572,19 @@ try {
     await callRoute(rulesRouteAuth, { method: 'POST', body: JSON.stringify({ protectedPaths: [] }) })
   }
 
+  // ★★ 自动臂间隔离（谁写的谁拥有）：设置页要有开关，/status 要带出现状
+  check('U1', '★★ 页面里有「谁写的谁拥有」开关（自动臂间隔离）',
+    allText.includes('谁写的谁拥有') && allText.includes('自动臂间隔离') && allText.includes('shield 放行'),
+    '（应含开关名与逃生门提示）')
+  {
+    const st3 = await callRoute(statusRoute)
+    let own = null, autoOwn = null
+    try { const j = JSON.parse(st3.body); own = j.own; autoOwn = j.config.autoOwnWrites } catch { }
+    check('U3', '★★ /status 带出「谁写的谁拥有」的现状（开关 + 已登记数 + 放行列表）',
+      autoOwn === true && Boolean(own) && typeof own.total === 'number' && Array.isArray(own.shared) && Array.isArray(own.recent),
+      `autoOwnWrites=${autoOwn} own=${JSON.stringify(own).slice(0, 120)}`)
+  }
+
   // 触发一次拒绝，看计数与最近记录
   const pre = listeners.find((l) => l.e === 'tools/pre-execute')
   const subExec = { name: 'read', arguments: { file_path: join(unitHome, 'sessions', 'x', 'session.v4.jsonl.zstd') },
