@@ -1,0 +1,350 @@
+#!/usr/bin/env node
+/**
+ * dsh-subagent-shield —— 语义层「族谱矩阵」测试
+ *
+ * 存在的原因：今晚 4 个真漏洞是**同一族** ——
+ *   「拿不到确定的目标 → 回落到宽松默认 → 放行」。
+ *   · settingsScope（服务名臆想）
+ *   · glob/grep 的 pattern 参数没查
+ *   · 目录级路径（ws/sid 为 null）回落 defaultPolicy
+ *   · 通配符 token（** / *）回落 defaultPolicy
+ * 靠红队"碰运气"抓它们效率太低。这里改成**穷举**：
+ *
+ *   ① 把「规范」**独立重写一遍**当预言机（oracle，不看实现写的）
+ *   ② 对 身份 × 规则 × 类别 的叉乘逐个比对 —— 两个独立实现不一致处即漏洞
+ *   ③ 再对 形态 × 类别 × 工具参数 的叉乘穷举（混淆与参数名维度）
+ *   ④ 最后钉住一条**总不变式**：只有"具体且明确豁免"才放行，其余一律拦
+ *
+ * 只在沙箱里跑，不碰正在用的 DSH。
+ */
+
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, rmSync, existsSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { tmpdir } from 'node:os'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { findCheckout, findDshBin, nodeExe, sampleHome } from './_env.mjs'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+// 插件根自动识别，兼容两种布局：
+//   ① 作者测试台：<台>\独立测试台\ + <台>\隔离插件\  ② git 仓库：<仓库>\test\ + <仓库>\lib\
+const PLUGIN_SRC = existsSync(join(HERE, '..', '隔离插件', 'lib', 'index.js')) ? join(HERE, '..', '隔离插件') : join(HERE, '..')
+const CHECKOUT = findCheckout()
+const HOME = sampleHome()   // 只当"受保护根"样例，不读写
+
+const results = []
+const check = (title, ok, detail = '') => {
+  results.push({ title, ok, detail })
+  console.log(`${ok ? '  ✅' : '  ❌'} ${title}${detail ? '  —— ' + detail : ''}`)
+}
+
+const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+const sandbox = join(tmpdir(), 'dsh-isolated-tests', 'matrix-' + stamp)
+const cleanup = () => { try { rmSync(sandbox, { recursive: true, force: true }) } catch { } }
+process.on('SIGINT', () => { cleanup(); process.exit(130) })
+
+function installForUnitTests(dest) {
+  mkdirSync(join(dest, '..', 'node_modules', '@deepseek-ai'), { recursive: true })
+  const smLink = join(dest, '..', 'node_modules', '@deepseek-ai', 'schemastery')
+  try { rmSync(smLink, { recursive: true, force: true }) } catch { }
+  spawnSync('cmd', ['/c', 'mklink', '/J', smLink, join(CHECKOUT, 'node_modules', '@deepseek-ai', 'schemastery')], { stdio: 'ignore' })
+  spawnSync('cmd', ['/c', 'xcopy', PLUGIN_SRC, dest, '/E', '/I', '/Q', '/Y'], { stdio: 'ignore' })
+}
+
+console.log('🐋 dsh-subagent-shield —— 族谱矩阵测试')
+console.log(`   插件: ${PLUGIN_SRC}`)
+console.log(`   沙箱: ${sandbox}\n`)
+
+// ═══════════════════════════════════════════════════════════════
+// ① 预言机：**照规范散文重写**，不参考实现代码
+//    规范：优先级 具体窗口 > 具体工作区 > 目录级(祖先) > defaultPolicy；
+//          目录级/通配/未知 一律按"后代的并集"处理 —— 只要下面还有受保护对象就拦。
+// ═══════════════════════════════════════════════════════════════
+const concrete = (v) => typeof v === 'string' && v.length > 0 && !/[*?]/.test(v)
+const has = (o, k) => Boolean(o) && Object.prototype.hasOwnProperty.call(o, k)
+
+/** 规范实现（独立于插件实现） */
+function spec({ kind, ws, sid }, rules, cats) {
+  if (kind === 'credentials') return cats.protectCredentials !== false
+  if (kind === 'sessions' && cats.protectSessions === false) return false
+  if (kind === 'projcache' && cats.protectProjcache === false) return false
+
+  const W = rules.workspaces || {}, N = rules.windows || {}
+  const anyWin = Object.values(N).some(Boolean)
+  const anyWs = Object.values(W).some(Boolean)
+  const dflt = (rules.defaultPolicy ?? 'protect') !== 'allow'
+  /** 目录级 / 不确定目标的判定：默认保护，或下面还有任何受保护对象 */
+  const ancestor = () => dflt || anyWin || anyWs
+
+  if (kind === 'projcache') {
+    if (!concrete(sid)) return ancestor()   // 通配或缺失的 sid → 保守
+    if (has(N, sid)) return Boolean(N[sid])
+    return dflt
+  }
+  // sessions
+  // 规范第 1 条：**任一身份不确定（通配/缺失）⇒ 先保守**，
+  //   不再去看"被点名的窗口" —— 通配前缀代表查询面很宽，不能只凭一个名字就放行。
+  //   （实测：ws="**" + sid="sid-1"(已豁免) 这一格，实现选择拦，是对的）
+  if (!concrete(sid) || !concrete(ws)) {
+    if (concrete(ws) && has(W, ws) && W[ws] === true) return true   // 该工作区被点名保护
+    return ancestor()
+  }
+  // 规范第 2 条：两侧都具体 = 单个叶子 → 具体窗口 > 具体工作区 > 默认策略
+  if (has(N, sid)) return Boolean(N[sid])
+  if (has(W, ws)) return Boolean(W[ws])
+  return dflt
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ② 叉乘：身份 × 规则 × 类别
+// ═══════════════════════════════════════════════════════════════
+const WS_TOKENS = ['ws-alpha', 'ws-beta', 'ws-unknown', null, '', '**', '*']
+const SID_TOKENS = ['sid-1', 'sid-2', 'sid-unknown', null, '', '*.jsonl.zstd', '**']
+const KINDS = ['sessions', 'projcache', 'credentials']
+const RULE_SETS = [
+  ['默认保护·无覆盖', { defaultPolicy: 'protect', workspaces: {}, windows: {} }],
+  ['默认放行·无覆盖', { defaultPolicy: 'allow', workspaces: {}, windows: {} }],
+  ['默认放行·点名工作区', { defaultPolicy: 'allow', workspaces: { 'ws-alpha': true }, windows: {} }],
+  ['默认放行·点名窗口', { defaultPolicy: 'allow', workspaces: {}, windows: { 'sid-1': true } }],
+  ['默认保护·豁免工作区', { defaultPolicy: 'protect', workspaces: { 'ws-alpha': false }, windows: {} }],
+  ['默认保护·豁免窗口', { defaultPolicy: 'protect', workspaces: {}, windows: { 'sid-1': false } }],
+  ['窗口豁免盖过工作区', { defaultPolicy: 'protect', workspaces: { 'ws-alpha': true }, windows: { 'sid-1': false } }],
+  ['默认放行·全 false', { defaultPolicy: 'allow', workspaces: { 'ws-alpha': false, 'ws-beta': false }, windows: { 'sid-1': false, 'sid-2': false } }],
+  ['默认放行·全 true', { defaultPolicy: 'allow', workspaces: { 'ws-alpha': true, 'ws-beta': true }, windows: { 'sid-1': true, 'sid-2': true } }],
+  ['混合真假', { defaultPolicy: 'allow', workspaces: { 'ws-alpha': true, 'ws-beta': false }, windows: { 'sid-1': false, 'sid-2': true } }],
+]
+const CAT_SETS = [
+  ['三类全开', { protectSessions: true, protectProjcache: true, protectCredentials: true }],
+  ['凭据关', { protectSessions: true, protectProjcache: true, protectCredentials: false }],
+  ['会话关', { protectSessions: false, protectProjcache: true, protectCredentials: true }],
+  ['三类全关', { protectSessions: false, protectProjcache: false, protectCredentials: false }],
+]
+
+let mod = null
+try {
+  const unitDir = join(sandbox, 'unit', 'dsh-subagent-shield')
+  installForUnitTests(unitDir)
+  mod = await import(pathToFileURL(join(unitDir, 'lib', 'index.js')).href)
+
+  console.log('── M1 预言机比对：身份 × 规则 × 类别')
+  let cases = 0
+  const violations = []
+  for (const kind of KINDS) {
+    for (const ws of WS_TOKENS) {
+      for (const sid of SID_TOKENS) {
+        // projcache 只看 sid；sessions 两者都看；credentials 都不看
+        if (kind === 'projcache' && ws !== 'ws-alpha') continue          // 去重
+        if (kind === 'credentials' && (ws !== 'ws-alpha' || sid !== 'sid-1')) continue
+        for (const [rName, rules] of RULE_SETS) {
+          for (const [cName, cats] of CAT_SETS) {
+            cases++
+            const info = { kind, ws, sid }
+            const want = spec(info, rules, cats)
+            const got = mod.isProtected(info, rules, cats) === true
+            if (want !== got) {
+              violations.push({ kind, ws, sid, rName, cName, want, got, rules, cats })
+            }
+          }
+        }
+      }
+    }
+  }
+  check(`M1 预言机比对：${cases} 组组合零分歧`, violations.length === 0,
+    violations.length
+      ? `${violations.length} 处分歧，前 3 处：` + violations.slice(0, 3).map((v) => `[${v.kind} ws=${JSON.stringify(v.ws)} sid=${JSON.stringify(v.sid)} ${v.rName}/${v.cName}] 规范=${v.want} 实现=${v.got}`).join(' ； ')
+      : '规范与实现在整个叉乘上一致')
+
+  console.log('\n── M2 总不变式：放行必须落在「用户显式允许的范围内」')
+  // 独立于预言机的安全性质（不重跑实现）：
+  //   · 被点名 protect 的具体对象，放行就是错的（不论默认策略）
+  //   · 默认放行时，未点名放行 = 用户明确要的，合法
+  //   · 默认保护时，放行必须能追溯到一条具体豁免
+  const allowedIsJustified = ({ kind, ws, sid }, rules) => {
+    const W = rules.workspaces || {}, N = rules.windows || {}
+    const anyWin = Object.values(N).some(Boolean)
+    const dflt = (rules.defaultPolicy ?? 'protect') !== 'allow'
+    if (concrete(sid) && has(N, sid) && N[sid] === true) return false          // 点名 protect 却放行
+    if (!concrete(sid) && concrete(ws) && has(W, ws) && W[ws] === true) return false  // 点名保护的工作区，目录级被放行
+    if (!dflt) return true                                                     // 默认放行：未点名即合法
+    if (concrete(sid) && has(N, sid) && N[sid] === false) return true           // 具体窗口点名豁免
+    if (concrete(sid) && concrete(ws) && !has(N, sid) && has(W, ws) && W[ws] === false) return true  // 具体文件落在豁免工作区
+    if (!concrete(sid) && concrete(ws) && has(W, ws) && W[ws] === false && !anyWin) return true      // 整片确无保护
+    return false
+  }
+  const ALLOW_RULES = [
+    ['默认保护·无覆盖', { defaultPolicy: 'protect', workspaces: {}, windows: {} }],
+    ['默认放行·无覆盖', { defaultPolicy: 'allow', workspaces: {}, windows: {} }],
+    ['默认保护·豁免工作区', { defaultPolicy: 'protect', workspaces: { 'ws-beta': false }, windows: {} }],
+    ['默认保护·豁免窗口', { defaultPolicy: 'protect', workspaces: {}, windows: { 'sid-2': false } }],
+    ['默认放行·点名拦住一个窗口', { defaultPolicy: 'allow', workspaces: {}, windows: { 'sid-1': true } }],
+    ['默认保护·豁免工作区但点名保护一个窗口', { defaultPolicy: 'protect', workspaces: { 'ws-beta': false }, windows: { 'sid-1': true } }],
+  ]
+  let unsafe = 0
+  const unsafeCases = []
+  let allowedTotal = 0
+  for (const kind of KINDS) {
+    for (const ws of WS_TOKENS) for (const sid of SID_TOKENS) {
+      if (kind === 'projcache' && ws !== 'ws-alpha') continue
+      if (kind === 'credentials' && (ws !== 'ws-alpha' || sid !== 'sid-1')) continue
+      for (const [rName, rules] of ALLOW_RULES) {
+        const info = { kind, ws, sid }
+        if (kind === 'credentials') continue                    // 凭据的放行只在"三类全关"时，由 M5 覆盖
+        const got = mod.isProtected(info, rules, CAT_SETS[0][1])
+        if (got) continue
+        allowedTotal++
+        if (!allowedIsJustified(info, rules)) {
+          unsafe++
+          if (unsafeCases.length < 6) unsafeCases.push(`${rName} / ${kind} ws=${JSON.stringify(ws)} sid=${JSON.stringify(sid)}`)
+        }
+      }
+    }
+  }
+  check(`M2 放行全部落在显式允许范围内（共检查 ${allowedTotal} 组放行）`, unsafe === 0,
+    unsafe ? `${unsafe} 组越界放行：${unsafeCases.join('；')}` : '没有一组越界')
+
+  console.log('\n── M3 具体且明确豁免 → 必须放行（不误伤）')
+  const exemptOk = []
+  const checksExempt = [
+    [{ kind: 'sessions', ws: 'ws-beta', sid: 'sid-x' }, { defaultPolicy: 'protect', workspaces: { 'ws-beta': false }, windows: {} }],
+    [{ kind: 'sessions', ws: 'ws-alpha', sid: 'sid-2' }, { defaultPolicy: 'protect', workspaces: {}, windows: { 'sid-2': false } }],
+    [{ kind: 'projcache', ws: null, sid: 'sid-2' }, { defaultPolicy: 'protect', workspaces: {}, windows: { 'sid-2': false } }],
+    [{ kind: 'sessions', ws: 'ws-x', sid: 'sid-x' }, { defaultPolicy: 'allow', workspaces: {}, windows: {} }],
+  ]
+  for (const [info, rules] of checksExempt) {
+    const got = mod.isProtected(info, rules, CAT_SETS[0][1])
+    exemptOk.push(!got ? true : false)
+  }
+  check('M3 明确豁免的具体对象仍放行', exemptOk.every(Boolean),
+    `${exemptOk.filter(Boolean).length}/${exemptOk.length} 条放行`)
+
+  console.log('\n── M4 形态 × 类别 × 工具参数 叉乘')
+  const WS_ENC = '--C-Users-me-~8BBA~5B50~7A97~53E3--'
+  const P_SESS = `${HOME}\\sessions\\${WS_ENC}\\sid-1\\session.v4.jsonl.zstd`
+  const P_PROJ = `${HOME}\\storages\\session_projcache\\sessions\\sid-1.json`
+  const P_CRED = `${HOME}\\.credentials.yaml`
+  const P_RULE = `${HOME}\\subagent-shield-rules.json`
+  const FORMS = [
+    ['原样', (p) => p],
+    ['正斜杠', (p) => p.replace(/\\/g, '/')],
+    ['整体大写', (p) => p.toUpperCase()],
+    ['双引号包裹', (p) => `"${p}"`],
+    ['\\\\?\\ 前缀', (p) => '\\\\?\\' + p],
+    ['叠 ../', (p) => p.replace('\\sessions\\', '\\sessions\\..\\sessions\\')],
+    ['叠 .\\', (p) => p.replace('\\sessions\\', '\\.\\sessions\\')],
+    ['重复分隔符', (p) => p.replace('\\sessions\\', '\\\\sessions\\\\')],
+  ]
+  const TOOL_ARG = [
+    ['read', 'file_path', (p) => ({ file_path: p })],
+    ['write', 'file_path', (p) => ({ file_path: p, content: 'x' })],
+    ['edit', 'file_path', (p) => ({ file_path: p, old_string: 'a', new_string: 'b' })],
+    ['glob(path)', 'path', (p) => ({ pattern: '**/*.x', path: p })],
+    ['glob(pattern)', 'pattern', (p) => ({ pattern: p })],
+    ['grep(path)', 'path', (p) => ({ pattern: 'x', path: p })],
+    ['grep(include)', 'include', (p) => ({ pattern: 'x', include: p })],
+  ]
+  const TARGETS = [['会话文件', P_SESS], ['投影缓存', P_PROJ], ['凭据', P_CRED], ['规则文件', P_RULE]]
+  const R_PROTECT = { defaultPolicy: 'protect', workspaces: {}, windows: {} }
+  let combos = 0
+  const leaks = []
+  for (const [tName, p] of TARGETS) {
+    for (const [fName, form] of FORMS) {
+      for (const [tool, argName, build] of TOOL_ARG) {
+        combos++
+        const h = mod.evaluateCall({
+          name: tool.split('(')[0], args: build(form(p)), isSubagent: true,
+          home: HOME, auditFile: `${HOME}\\subagent-shield-audit.jsonl`, rules: R_PROTECT, cats: CAT_SETS[0][1], guardShellText: true,
+        })
+        if (!h) leaks.push(`${tName}/${fName}/${tool}(${argName})`)
+      }
+    }
+  }
+  check(`M4 形态×目标×工具 ${combos} 组组合全部拦住`, leaks.length === 0,
+    leaks.length ? `${leaks.length} 组漏网：` + leaks.slice(0, 6).join('，') : '8 种形态 × 4 类目标 × 7 种工具参数，全拦')
+
+  console.log('\n── M5 零保护时不该乱拦（防过度收紧）')
+  const NO_PROTECT = { defaultPolicy: 'allow', workspaces: {}, windows: {} }
+  const NO_CATS = { protectSessions: false, protectProjcache: false, protectCredentials: false }
+  let overBlocked = 0
+  for (const [tName, p] of TARGETS.filter(([n]) => n !== '规则文件')) {
+    for (const [tool, , build] of TOOL_ARG) {
+      const h = mod.evaluateCall({
+        name: tool.split('(')[0], args: build(p), isSubagent: true,
+        home: HOME, auditFile: '', rules: NO_PROTECT, cats: NO_CATS, guardShellText: true,
+      })
+      if (h) overBlocked++
+    }
+  }
+  check('M5 三类全关 + 默认放行 → 普通目标放行（不误伤）', overBlocked === 0, overBlocked ? `${overBlocked} 组被误拦` : '组合零误拦')
+
+  console.log('\n── M6 自身文件永远保护（与用户规则无关）')
+  let selfLeaks = 0
+  for (const p of [P_RULE, `${HOME}\\subagent-shield-state.json`, `${HOME}\\subagent-shield-audit.jsonl`]) {
+    for (const [tool, , build] of TOOL_ARG) {
+      const h = mod.evaluateCall({
+        name: tool.split('(')[0], args: build(p), isSubagent: true,
+        home: HOME, auditFile: `${HOME}\\subagent-shield-audit.jsonl`,
+        rules: NO_PROTECT, cats: NO_CATS, guardShellText: false,
+      })
+      if (!h) selfLeaks++
+    }
+  }
+  check('M6 即使保护全关，插件自身文件仍拦住', selfLeaks === 0, selfLeaks ? `${selfLeaks} 组漏网` : '规则/状态/账本 × 7 种工具参数，全拦')
+
+  // ★★ 回归（评审 P2）：规则条数不该影响单次判定耗时
+  //    原版每次判定都 `Object.values(rules.windows).some(Boolean)` 铺开整张表：
+  //    实测 0 条 4.7 µs → 6400 条 3439 µs（732×）。而设置页的主用法恰恰是逐条点名，
+  //    这个劣化正好惩罚它自己的推荐用法。修法：按规则对象身份缓存聚合值。
+  console.log('\n── M7 性能：规则条数不该拖慢单次判定（评审 P2）')
+  const mkRules = (n) => {
+    const w = {}
+    for (let i = 0; i < n; i++) w['sid-' + i] = true
+    w['sid-1'] = true
+    return { defaultPolicy: 'allow', workspaces: {}, windows: w }
+  }
+  const benchUs = (rules) => {
+    const call = {
+      name: 'read',
+      args: { file_path: `${HOME}\\sessions\\--C-Users-me-~8BBA~5B50~7A97~53E3--\\sid-1\\session.v4.jsonl.zstd` },
+      isSubagent: true, home: HOME, auditFile: '', rules, cats: CAT_SETS[0][1], guardShellText: true,
+    }
+    for (let i = 0; i < 3000; i++) mod.evaluateCall(call)      // 预热（含首次聚合计算）
+    const t0 = process.hrtime.bigint()
+    const N = 20000
+    for (let i = 0; i < N; i++) mod.evaluateCall(call)
+    return Number(process.hrtime.bigint() - t0) / N / 1000     // µs
+  }
+  const us0 = benchUs(mkRules(0))
+  const us3k = benchUs(mkRules(3000))
+  const ratio = us3k / Math.max(us0, 0.001)
+  check(`M7 规则 0 → 3000 条：单次判定增长 ${ratio.toFixed(2)}×（阈值 < 10）`, ratio < 10,
+    `${us0.toFixed(2)} µs → ${us3k.toFixed(2)} µs（未修时是几百倍）`)
+
+  // ★★ 回归（评审 P7）：这三格**反直觉但实测为准**，显式钉住，
+  //    免得下一个人按散文规范把判定改坏（评审者自己按散文推错了 3 次）。
+  console.log('\n── M8 反直觉三格（allow + 无人点名）')
+  const R_NONE = { defaultPolicy: 'allow', workspaces: {}, windows: {} }
+  const R_SOME = { defaultPolicy: 'protect', workspaces: {}, windows: {} }
+  const odd = [
+    ['ws 具体 + sid 通配（**）', { kind: 'sessions', ws: 'ws-alpha', sid: '**' }],
+    ['ws 通配（**）+ sid 具体', { kind: 'sessions', ws: '**', sid: 'sid-1' }],
+    ['ws 缺失 + sid 具体', { kind: 'sessions', ws: null, sid: 'sid-1' }],
+  ]
+  for (const [label, info] of odd) {
+    const allow = mod.isProtected(info, R_NONE, CAT_SETS[0][1])
+    const prot = mod.isProtected(info, R_SOME, CAT_SETS[0][1])
+    check(`M8 ${label}：allow+无人点名 → 放行；改回 protect → 拦`, allow === false && prot === true,
+      `allow=${allow ? '拦' : '放行'}  protect=${prot ? '拦' : '放行'}（祖先并集为空时无处可保守）`)
+  }
+} catch (e) {
+  check('测试本身出错', false, String(e?.stack ?? e))
+} finally {
+  cleanup()
+}
+
+const failed = results.filter((r) => !r.ok)
+console.log('\n' + '─'.repeat(64))
+console.log(`  共 ${results.length} 项，通过 ${results.length - failed.length}，失败 ${failed.length}`)
+failed.forEach((f) => console.log(`    · ${f.title}  ${f.detail}`))
+console.log(`  沙箱已清理: ${!existsSync(sandbox)}`)
+console.log('='.repeat(64))
+process.exit(failed.length ? 1 : 0)

@@ -1,0 +1,23 @@
+# 运行时产物 / 沙箱残留，绝不入库
+node_modules/
+*.log
+dsh-shield-*
+subagent-shield-rules.json
+subagent-shield-state.json
+subagent-shield-audit.jsonl
+
+# 凭据：本插件会保护它，仓库里更不能有
+.credentials.yaml
+*.bak
+*.bak-*
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+*.swp
+
+# 临时脚本
+/tmp/
+/.scratch/

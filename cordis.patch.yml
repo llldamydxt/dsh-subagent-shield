@@ -1,0 +1,8 @@
+# dsh-subagent-shield —— 挂载声明
+#
+# 装进 profile 时，在 profile 的 cordis.patch.yml 里 insert 这一行。
+# 注意：模板补丁是 `[]` 时不能直接往后追加，必须整体替换（这个坑踩过）。
+
+- insert:
+    - id: dsh-subagent-shield
+      name: dsh-subagent-shield
