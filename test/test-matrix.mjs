@@ -335,6 +335,59 @@ try {
     check(`M8 ${label}：allow+无人点名 → 放行；改回 protect → 拦`, allow === false && prot === true,
       `allow=${allow ? '拦' : '放行'}  protect=${prot ? '拦' : '放行'}（祖先并集为空时无处可保守）`)
   }
+  // ★★ 臂间隔离（自定义受保护路径）—— 为什么加：护盾原先只管 DSH 自己的记录，
+  //    **完全不管实验产物**。实测子代理 C 能直接读到兄弟臂写下的文件，
+  //    而在真对照实验里"A 臂看到 B 臂的产物"比"翻会话记录"常见得多。
+  console.log('\n── M9 臂间隔离：自定义受保护路径（path + 归属窗口）')
+  {
+    const LAB = 'C:\\lab'
+    const ARM_A = `${LAB}\\armA`
+    const ARM_B = `${LAB}\\armB`
+    const WIN_A = 'session-aaaa-1111'
+    const WIN_B = 'session-bbbb-2222'
+    const R_B = { defaultPolicy: 'protect', workspaces: {}, windows: {}, protectedPaths: [{ path: ARM_B, owner: WIN_B }] }
+    const R_B_NOOWNER = { defaultPolicy: 'protect', workspaces: {}, windows: {}, protectedPaths: [{ path: ARM_B }] }
+    const call = (file, win, rules) => mod.evaluateCall({
+      name: 'read', args: { file_path: file }, isSubagent: true, scope: 'subagents',
+      home: HOME, auditFile: '', rules, cats: CAT_SETS[0][1], guardShellText: true, window: win,
+    })
+
+    check('M9 非归属窗口读臂B 目录 → 拦', Boolean(call(`${ARM_B}\\out.json`, WIN_A, R_B)))
+    check('M9 归属窗口（臂B 自己）读 → 放行', !call(`${ARM_B}\\out.json`, WIN_B, R_B))
+    check('M9 归属窗口的子代理也放行（window 相同）', !call(`${ARM_B}\\sub\\x.txt`, WIN_B, R_B))
+    check('M9 命中拒绝文案里点明"归属窗口"', /归属窗口/.test(String(call(`${ARM_B}\\out.json`, WIN_A, R_B)?.reason ?? '')))
+    check('M9 未指定 owner → 对所有人受保护', Boolean(call(`${ARM_B}\\out.json`, WIN_B, R_B_NOOWNER)))
+    check('M9 目录本身（不含分隔符）也拦', Boolean(call(ARM_B, WIN_A, R_B)))
+    check('M9 ★ 前缀碰撞：…\\armB2 不能被 …\\armB 误吃', !call(`${ARM_B}2\\out.json`, WIN_A, R_B))
+    check('M9 大小写 / 正斜杠变体照样命中', Boolean(call(`c:/LAB/ARMB/out.json`, WIN_A, R_B)))
+    check('M9 `..` 穿越：armA\\..\\armB\\x → 仍命中', Boolean(call(`${ARM_A}\\..\\armB\\x.txt`, WIN_A, R_B)))
+    check('M9 臂A 自己的目录不受影响', !call(`${ARM_A}\\out.json`, WIN_A, R_B))
+    check('M9 ★ 配了自定义路径也不影响原有保护（会话仍拦）',
+      Boolean(call(`${HOME}\\sessions\\ws\\sid\\session.v4.jsonl.zstd`, WIN_A, R_B)))
+
+    // 命令族：字面出现路径文本
+    const sh = (cmd, win, rules) => mod.evaluateCall({
+      name: 'pwsh', args: { command: cmd }, isSubagent: true, scope: 'subagents',
+      home: HOME, auditFile: '', rules, cats: CAT_SETS[0][1], guardShellText: true, window: win,
+    })
+    check('M9 命令行字面出现臂B 路径 → 拦', Boolean(sh(`Get-Content "${ARM_B}\\out.json"`, WIN_A, R_B)))
+    check('M9 归属窗口执行同样命令 → 放行', !sh(`Get-Content "${ARM_B}\\out.json"`, WIN_B, R_B))
+    check('M9 命令族拒绝文案标明是启发式', /启发式/.test(String(sh(`type ${ARM_B}\\out.json`, WIN_A, R_B)?.reason ?? '')))
+
+    // ★ 前缀容错：DSH 里同一会话的 id 有时带 session- 前缀有时不带（账本实测过）
+    check('M9 ★ 归属比较容错 session- 前缀（带/不带都算同一个窗口）',
+      !call(`${ARM_B}\\out.json`, 'bbbb-2222', R_B) && !call(`${ARM_B}\\out.json`, 'session-bbbb-2222', R_B),
+      'owner=session-bbbb-2222，两种写法都应放行')
+    check('M9 ★ 前缀容错不会把不同窗口算成同一个',
+      Boolean(call(`${ARM_B}\\out.json`, 'session-cccc-3333', R_B)) === true,
+      '别的窗口仍应被拦')
+    check('M9 sameWindow 的直接行为',
+      mod.sameWindow('session-x1', 'x1') && mod.sameWindow('X1', 'session-x1') && !mod.sameWindow('x1', 'x2'))
+    // matchProtectedPath 的直接行为（导出函数，便于别处复用）
+    check('M9 matchProtectedPath 返回 path 与 owner',
+      mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
+    check('M9 空规则 / 空列表 → null', mod.matchProtectedPath(`${ARM_B}\\x`, {}) === null)
+  }
 } catch (e) {
   check('测试本身出错', false, String(e?.stack ?? e))
 } finally {

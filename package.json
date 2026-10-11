@@ -1,6 +1,6 @@
 {
   "name": "dsh-subagent-shield",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "private": true,
   "description": "子代理信息隔断：禁止子代理读取父会话/兄弟会话的落盘记录、投影缓存与凭据文件；带设置页配置卡与可拖动状态小窗",
   "type": "module",
@@ -22,24 +22,5 @@
       ]
     }
   },
-  "license": "MIT",
-  "author": "llldamydxt",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/llldamydxt/dsh-subagent-shield.git"
-  },
-  "homepage": "https://github.com/llldamydxt/dsh-subagent-shield#readme",
-  "bugs": {
-    "url": "https://github.com/llldamydxt/dsh-subagent-shield/issues"
-  },
-  "keywords": [
-    "dsh",
-    "deepseek-harness",
-    "plugin",
-    "subagent",
-    "isolation",
-    "sandbox",
-    "security",
-    "privacy"
-  ]
+  "license": "MIT"
 }

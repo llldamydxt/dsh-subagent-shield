@@ -214,13 +214,17 @@ try {
   check('U1', '写回带上了 revision 围栏', mutateCalls.every((m) => m.rev === 5), JSON.stringify(mutateCalls.map((m) => m.rev)))
   check('U1', '页面里有 scope / mode / 逐项保护的开关文案',
     allText.includes('subagents') && allText.includes('window（') && allText.includes('投影缓存'))
-  check('U1', '页面里有「按工作区」「按窗口」两段（v4 的颗粒度）',
-    allText.includes('按工作区') && allText.includes('按窗口'))
+  check('U1', '页面里有「按工作区」「按窗口」两段（v4 的颗粒度）',    allText.includes('按工作区') && allText.includes('按窗口'))
   check('U1', '默认策略二选一（默认全拦 / 只拦点名的）',
     allText.includes('默认把全部拦住') && allText.includes('默认全部放行'))
   check('U1', '存在"状态小窗"开关按钮',
     buttons.some((b) => String(b.children?.[0] ?? '').includes('状态小窗')),
     buttons.map((b) => String(b.children?.[0] ?? '')).join(' / ').slice(0, 120))
+  // ★★ 臂间隔离：设置页要有入口（否则使用者没法配置这个机制）
+  check('U1', '★★ 页面里有「臂间隔离」区与「添加一条」按钮',
+    allText.includes('臂间隔离') && allText.includes('自定义拦住目录') &&
+    buttons.some((b) => String(b.children?.[0] ?? '').includes('添加一条')),
+    `按钮：${buttons.map((b) => String(b.children?.[0] ?? '')).join(' / ').slice(0, 160)}`)
 
   // ★ 全开 / 全清 按钮（纯逻辑单测 + 渲染里确实接了按钮）
   const H = mod.__helpers || {}
@@ -535,6 +539,34 @@ try {
   const reducedRules = await callRoute(rulesRouteAuth, { method: 'POST', body: '{}' })
   check('U3', '★★ 降级模式下 /rules 写入仍 401（写操作绝不放行）', reducedRules.code === 401, `code=${reducedRules.code}`)
   fakeConnection.requestRejection = savedRejection
+
+  // ★★ 臂间隔离：自定义拦住目录的读写通道（设置页就是靠这条 POST 落盘的）
+  {
+    const body = JSON.stringify({
+      protectedPaths: [
+        { path: 'C:\\lab\\armB', owner: 'session-win-1' },
+        { path: '   ' },                    // 空路径 → 应被丢掉
+        { path: 'C:\\lab\\armC' },          // 无 owner → 对所有人拦住
+        { path: 'C:\\lab\\armD', owner: '  ' },  // owner 是空白 → 当成无 owner
+      ],
+    })
+    const r = await callRoute(rulesRouteAuth, { method: 'POST', body })
+    let rulesBack = {}
+    try { rulesBack = JSON.parse(r.body).rules || {} } catch { }
+    const pp = rulesBack.protectedPaths || []
+    check('U3', '★★ 自定义拦住目录能写进规则并回读', r.code === 200 && pp.length === 3,
+      `code=${r.code} 条数=${pp.length} ${JSON.stringify(pp)}`)
+    check('U3', '★★ 空路径被丢掉、空白 owner 被清掉',
+      pp.length === 3 && pp[0].owner === 'session-win-1' && !('owner' in pp[1]) && !('owner' in pp[2]),
+      JSON.stringify(pp))
+    const st2 = await callRoute(statusRoute)
+    let names = []
+    try { names = (JSON.parse(st2.body).rules.protectedPaths || []).map((x) => x.path) } catch { }
+    check('U3', '★★ /status 会带出自定义拦住目录（设置页据此渲染）',
+      names.includes('C:\\lab\\armB') && names.includes('C:\\lab\\armC'), JSON.stringify(names))
+    // 复原，别影响后面的用例
+    await callRoute(rulesRouteAuth, { method: 'POST', body: JSON.stringify({ protectedPaths: [] }) })
+  }
 
   // 触发一次拒绝，看计数与最近记录
   const pre = listeners.find((l) => l.e === 'tools/pre-execute')
