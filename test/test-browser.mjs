@@ -259,23 +259,50 @@ try {
   //    ② 那个「设置」按钮**没有文字**，只有 aria-label="设置" → 按文字找永远找不到。
   const removed = await evalJs(`(() => { const w = document.getElementById('dsh-subagent-shield-widget'); if (w) { w.remove(); return true } return false })()`)
   check('设置页检查前已把浮窗节点摘掉（防文本检索假阳性）', removed === true)
-  const clicked = await evalJs(`(() => {
+
+  // ★ 公共辅助（第一次点设置之前就要有）
+  const pageText = async () => String(await evalJs(`document.body.innerText || ''`))
+  const NAV = /通用设置|内置插件/
+  const SECTION = /总开关|按工作区|拦住/
+  // ★ 真因（克隆里复现后看正文才明白）：沙箱实例有时**停在"选工作区"空态**
+  //   （正文是"…选择工作区 | 选择一个工作区开始…"），此时点「设置」不生效
+  //   → 导航断言假红，且后面依赖它的两条**根本没跑**（项数 22/20 飘）。
+  const ensureWorkspace = () => evalJs(`(() => {
+    const t = document.body.innerText || ''
+    if (!/选择一个工作区开始|选择工作区/.test(t)) return 'ok'
+    const el = [...document.querySelectorAll('*')]
+      .find(n => (n.innerText || '').trim() === '默认工作区' && n.children.length === 0)
+    if (!el) return 'no-workspace-entry'
+    ;(el.closest('button,[role=button],a,li,[tabindex]') ?? el).click()
+    return 'selected'
+  })()`)
+  const clickSettingsButton = () => evalJs(`(() => {
     const el = [...document.querySelectorAll('[aria-label],[title]')]
       .find(n => /^\\s*设置\\s*$|^\\s*Settings\\s*$/i.test((n.getAttribute('aria-label')||n.getAttribute('title')||'').trim()))
     if (!el) return 'no-settings-button'
     el.click(); return el.tagName
   })()`)
+
+  await ensureWorkspace()
+  await new Promise((r) => setTimeout(r, 800))
+  const clicked = await clickSettingsButton()
   // ★ 别用固定 sleep：设置页是 SPA，点「设置」后要重建界面。
   //   原来固定等 6 秒，机器一忙就只拿到外壳（实测 body.innerText 只有 380 字符）
   //   → 导航断言假红，且后面依赖它的检查**根本没跑**（项数在 22/20 之间飘）。
-  //   改成轮询等"设置导航"真的出现。
+  //   改成轮询等"设置导航"真的出现（等不到就再点一次设置按钮，最多 3 次）。
   let navText = ''
   {
     const deadline = Date.now() + 30000
+    let lastClick = Date.now()
     while (Date.now() < deadline) {
-      navText = String(await evalJs(`document.body.innerText || ''`))
-      if (/通用设置|皮肤市场|内置插件/.test(navText) && /信息隔断/.test(navText)) break
+      navText = await pageText()
+      if (NAV.test(navText) && /信息隔断/.test(navText)) break
       await new Promise((r) => setTimeout(r, 400))
+      if (Date.now() - lastClick > 6000) {          // 还没出来就再点一次设置
+        await ensureWorkspace()
+        await clickSettingsButton()
+        lastClick = Date.now()
+      }
     }
   }
   check('设置面板打开了', /通用设置|皮肤市场|内置插件/.test(navText),
@@ -288,16 +315,8 @@ try {
     navText.split('\n').map((s) => s.trim()).filter((l) => /通用设置|模型|内置插件|信息隔断/.test(l)).join(' | ').slice(0, 190))
 
   if (/信息隔断/.test(navText)) {
-    // ★ 别用固定 sleep，也别反复点分区入口 —— 那会把设置面板**点关**（实测 1/5 概率退回主页，
-    //   正文变成"新会话 | 插件 | 工作区…"，两条断言假红）。
-    //   改成"整轮重试"：确保设置导航在 → 点一次分区入口 → 等分区内容出现；不行就从头再来一轮。
-    const openSettings = () => evalJs(`(() => {
-      if (/通用设置|内置插件/.test(document.body.innerText || '')) return 'already'
-      const el = [...document.querySelectorAll('[aria-label],[title]')]
-        .find(n => /^\\s*设置\\s*$|^\\s*Settings\\s*$/i.test((n.getAttribute('aria-label')||n.getAttribute('title')||'').trim()))
-      if (!el) return 'no-settings-button'
-      el.click(); return 'clicked'
-    })()`)
+    // ★ 别用固定 sleep，也别反复点分区入口 —— 那会把设置面板**点关**（实测 1/5 概率退回主页）。
+    //   改成"整轮重试"：确保工作区/设置导航在 → 点**一次**分区入口 → 等分区内容；不行整轮重来。
     const clickSection = () => evalJs(`(() => {
       const leaf = [...document.querySelectorAll('*')].filter(n => (n.innerText || '').trim() === '信息隔断' && n.children.length === 0)
       const el = leaf[0]
@@ -305,24 +324,23 @@ try {
       ;(el.closest('button,[role=button],a,li,[tabindex]') ?? el).click()
       return 'clicked'
     })()`)
-    const bodyText = async () => String(await evalJs(`document.body.innerText || ''`))
-    const SECTION = /总开关|按工作区|拦住/
-    const NAV = /通用设置|内置插件/
 
     let secText = ''
     let go = 'not-attempted'
     for (let attempt = 1; attempt <= 3 && !SECTION.test(secText); attempt++) {
-      await openSettings()
+      await ensureWorkspace()                         // ← 先离开"选工作区"空态
+      await new Promise((r) => setTimeout(r, 800))     //   给界面一点时间切回来
+      if (!NAV.test(await pageText())) await clickSettingsButton()
       const d1 = Date.now() + 15000
       while (Date.now() < d1) {
         await new Promise((r) => setTimeout(r, 400))
-        if (NAV.test(await bodyText())) break
+        if (NAV.test(await pageText())) break
       }
       go = await clickSection()
       const d2 = Date.now() + 12000
       while (Date.now() < d2) {
         await new Promise((r) => setTimeout(r, 400))
-        secText = await bodyText()
+        secText = await pageText()
         if (SECTION.test(secText)) break
       }
     }
