@@ -90,7 +90,7 @@ DSH 会把每个会话的**完整记录**（每次工具调用、每段输出）
 前置：Node ≥ 20、PowerShell（Windows）、已装 DSH。
 
 ```powershell
-git clone <本仓库> dsh-subagent-shield
+git clone https://github.com/llldamydxt/dsh-subagent-shield.git
 cd dsh-subagent-shield
 
 # 先干跑看一眼会做什么（一个字节都不改）
