@@ -497,6 +497,33 @@ try {
       mod.dirHasForeignOwned(OWN, 'c:\\lab', { callerId: 'sub-b' }) === null)   // 只看直接子项
   }
 
+  // ★★ 命令族也必须拦 —— 这是**补漏洞**：
+  //    第一版只接了路径族，实测子代理换 `pwsh Get-Content <别人的绝对路径>` 就读到了。
+  {
+    const P1 = 'C:\\lab\\out\\a.js'
+    const OWN = {
+      version: 1, shared: [],
+      owned: { [mod.normalizePath(P1)]: { by: 'sub-a', label: '臂A', ts: '2026-10-11T00:00:00Z' } },
+    }
+    const sh = (cmd, who, extra = {}) => mod.evaluateCall({
+      name: 'pwsh', args: { command: cmd }, isSubagent: true, scope: 'subagents',
+      home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true,
+      autoOwnWrites: true, ownState: OWN, ...who, ...extra,
+    })
+    check('M10 ★★ 命令族：读别人的绝对路径 → 拦',
+      sh(`Get-Content -LiteralPath "${P1}"`, { caller: 'sub-b' })?.kind === 'owned',
+      String(sh(`Get-Content -LiteralPath "${P1}"`, { caller: 'sub-b' })?.reason ?? '').slice(0, 64))
+    check('M10 ★★ 命令族：列那个目录 → 拦',
+      sh('Get-ChildItem "C:\\lab\\out" | Select-Object -ExpandProperty Name', { caller: 'sub-b' })?.kind === 'owned')
+    check('M10 ★★ 命令族：只写"最后两段"（不带盘符）也拦得住',
+      sh('type out\\a.js', { caller: 'sub-b' })?.kind === 'owned')
+    check('M10 命令族：它自己执行同样命令 → 放行', !sh(`Get-Content "${P1}"`, { caller: 'sub-a' }))
+    check('M10 命令族：放行过的路径 → 放行',
+      !sh(`Get-Content "${P1}"`, { caller: 'sub-b' }, { ownState: { version: 1, owned: OWN.owned, shared: ['C:\\lab\\out'] } }))
+    check('M10 命令族：开关关掉就不管', !sh(`Get-Content "${P1}"`, { caller: 'sub-b' }, { autoOwnWrites: false }))
+    check('M10 命令族：无关命令不受影响', !sh('Get-Date', { caller: 'sub-b' }))
+  }
+
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
