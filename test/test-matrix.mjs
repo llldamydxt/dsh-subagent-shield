@@ -355,7 +355,8 @@ try {
     check('M9 非归属窗口读臂B 目录 → 拦', Boolean(call(`${ARM_B}\\out.json`, WIN_A, R_B)))
     check('M9 归属窗口（臂B 自己）读 → 放行', !call(`${ARM_B}\\out.json`, WIN_B, R_B))
     check('M9 归属窗口的子代理也放行（window 相同）', !call(`${ARM_B}\\sub\\x.txt`, WIN_B, R_B))
-    check('M9 命中拒绝文案里点明"归属窗口"', /归属窗口/.test(String(call(`${ARM_B}\\out.json`, WIN_A, R_B)?.reason ?? '')))
+    check('M9 命中拒绝文案里点明"归属者"', /归属者/.test(String(call(`${ARM_B}\\out.json`, WIN_A, R_B)?.reason ?? '')),
+      String(call(`${ARM_B}\\out.json`, WIN_A, R_B)?.reason ?? '').slice(0, 90))
     check('M9 未指定 owner → 对所有人受保护', Boolean(call(`${ARM_B}\\out.json`, WIN_B, R_B_NOOWNER)))
     check('M9 目录本身（不含分隔符）也拦', Boolean(call(ARM_B, WIN_A, R_B)))
     check('M9 ★ 前缀碰撞：…\\armB2 不能被 …\\armB 误吃', !call(`${ARM_B}2\\out.json`, WIN_A, R_B))
@@ -383,6 +384,37 @@ try {
       '别的窗口仍应被拦')
     check('M9 sameWindow 的直接行为',
       mod.sameWindow('session-x1', 'x1') && mod.sameWindow('X1', 'session-x1') && !mod.sameWindow('x1', 'x2'))
+    // ★★ 标签归属：**一个窗口开多个子代理**时区分臂（这正是"子代理能跑"的关键）
+    const R_LAB = { defaultPolicy: 'protect', workspaces: {}, windows: {}, protectedPaths: [{ path: ARM_B, label: 'Arm B' }] }
+    const callL = (file, who) => mod.evaluateCall({
+      name: 'read', args: { file_path: file }, isSubagent: true, scope: 'subagents',
+      home: HOME, auditFile: '', rules: R_LAB, cats: CAT_SETS[0][1], guardShellText: true, ...who,
+    })
+    check('M9 ★ 标签匹配 → 放行（同一窗口下的臂B）',
+      !callL(`${ARM_B}\\out.json`, { window: WIN_A, caller: 'sub-b', label: 'Arm B of demo' }))
+    check('M9 ★ 标签不匹配 → 拦住（同一窗口下的臂A）',
+      Boolean(callL(`${ARM_B}\\out.json`, { window: WIN_A, caller: 'sub-a', label: 'Arm A of demo' })))
+    check('M9 ★ 没有标签的调用者 → 拦住（不会误放行）',
+      Boolean(callL(`${ARM_B}\\out.json`, { window: WIN_A, caller: 'sub-a', label: null })))
+    check('M9 ★ owner 直接等于子代理自己的会话 id → 放行（子代理自报）',
+      !mod.evaluateCall({
+        name: 'read', args: { file_path: `${ARM_B}\\x` }, isSubagent: true, scope: 'subagents',
+        home: HOME, auditFile: '', cats: CAT_SETS[0][1],
+        rules: { defaultPolicy: 'protect', workspaces: {}, windows: {}, protectedPaths: [{ path: ARM_B, owner: 'sub-b' }] },
+        window: WIN_A, caller: 'sub-b', label: null,
+      }))
+    check('M9 ★ isOwnerCall 的三种判据各自成立',
+      mod.isOwnerCall({ window: 'w1' }, { owner: 'w1' }) &&
+      mod.isOwnerCall({ callerId: 'c1' }, { owner: 'c1' }) &&
+      mod.isOwnerCall({ label: 'Arm B（基线）' }, { label: 'arm b' }) &&
+      !mod.isOwnerCall({ label: 'Arm A' }, { label: 'arm b' }) &&
+      !mod.isOwnerCall({}, { owner: 'w1' }))
+    check('M9 ★ 命令族也认标签',
+      !mod.evaluateCall({
+        name: 'pwsh', args: { command: `type "${ARM_B}\\x"` }, isSubagent: true, scope: 'subagents',
+        home: HOME, auditFile: '', rules: R_LAB, cats: CAT_SETS[0][1], guardShellText: true,
+        window: WIN_A, caller: 'sub-b', label: 'Arm B of demo',
+      }))
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)

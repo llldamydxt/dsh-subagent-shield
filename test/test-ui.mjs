@@ -463,7 +463,11 @@ try {
   let hErr = null
   try { hostMod.apply(hostCtx, hostCfg()) } catch (e) { hErr = e }
   check('U3', 'apply 不抛错', hErr === null, hErr ? String(hErr.message) : '')
-  check('U3', 'webServer 走的是可选注入（不写进必需 inject）', injectCalls.length === 1 && injectCalls[0].includes('webServer'), JSON.stringify(injectCalls[0]))
+  check('U3', '可选注入都走嵌套 ctx.inject（webServer + subagents），不进必需 inject',
+    injectCalls.length >= 1 &&
+    injectCalls.some((d) => Array.isArray(d) && d.includes('webServer')) &&
+    injectCalls.some((d) => Array.isArray(d) && d.includes('subagents')),
+    JSON.stringify(injectCalls))
   check('U3', '必需 inject 里只有 commands', JSON.stringify(hostMod.inject) === '["commands"]', JSON.stringify(hostMod.inject))
   check('U3', '注册了三个 exact 路由（脚本 / 状态 / 规则）', routes.length === 3 && routes.every((r) => r.kind === 'exact'), routes.map((r) => r.path).join(', '))
   check('U3', '路由路径正确',
