@@ -265,8 +265,19 @@ try {
     if (!el) return 'no-settings-button'
     el.click(); return el.tagName
   })()`)
-  await new Promise((r) => setTimeout(r, 6000))
-  const navText = String(await evalJs(`document.body.innerText || ''`))
+  // ★ 别用固定 sleep：设置页是 SPA，点「设置」后要重建界面。
+  //   原来固定等 6 秒，机器一忙就只拿到外壳（实测 body.innerText 只有 380 字符）
+  //   → 导航断言假红，且后面依赖它的检查**根本没跑**（项数在 22/20 之间飘）。
+  //   改成轮询等"设置导航"真的出现。
+  let navText = ''
+  {
+    const deadline = Date.now() + 30000
+    while (Date.now() < deadline) {
+      navText = String(await evalJs(`document.body.innerText || ''`))
+      if (/通用设置|皮肤市场|内置插件/.test(navText) && /信息隔断/.test(navText)) break
+      await new Promise((r) => setTimeout(r, 400))
+    }
+  }
   check('设置面板打开了', /通用设置|皮肤市场|内置插件/.test(navText),
     clicked === 'no-settings-button' ? '按 aria-label=设置 找不到按钮' : `点击了 <${clicked}>，正文 ${navText.length} 字符`)
   // 注意：沙箱 profile 是 DSH 出厂模板，**不含皮肤市场**（那是使用者的插件）。
@@ -277,15 +288,44 @@ try {
     navText.split('\n').map((s) => s.trim()).filter((l) => /通用设置|模型|内置插件|信息隔断/.test(l)).join(' | ').slice(0, 190))
 
   if (/信息隔断/.test(navText)) {
-    const go = await evalJs(`(() => {
+    // ★ 别用固定 sleep，也别反复点分区入口 —— 那会把设置面板**点关**（实测 1/5 概率退回主页，
+    //   正文变成"新会话 | 插件 | 工作区…"，两条断言假红）。
+    //   改成"整轮重试"：确保设置导航在 → 点一次分区入口 → 等分区内容出现；不行就从头再来一轮。
+    const openSettings = () => evalJs(`(() => {
+      if (/通用设置|内置插件/.test(document.body.innerText || '')) return 'already'
+      const el = [...document.querySelectorAll('[aria-label],[title]')]
+        .find(n => /^\\s*设置\\s*$|^\\s*Settings\\s*$/i.test((n.getAttribute('aria-label')||n.getAttribute('title')||'').trim()))
+      if (!el) return 'no-settings-button'
+      el.click(); return 'clicked'
+    })()`)
+    const clickSection = () => evalJs(`(() => {
       const leaf = [...document.querySelectorAll('*')].filter(n => (n.innerText || '').trim() === '信息隔断' && n.children.length === 0)
       const el = leaf[0]
       if (!el) return 'no-section-entry'
       ;(el.closest('button,[role=button],a,li,[tabindex]') ?? el).click()
       return 'clicked'
     })()`)
-    await new Promise((r) => setTimeout(r, 5000))
-    const secText = String(await evalJs(`document.body.innerText || ''`))
+    const bodyText = async () => String(await evalJs(`document.body.innerText || ''`))
+    const SECTION = /总开关|按工作区|拦住/
+    const NAV = /通用设置|内置插件/
+
+    let secText = ''
+    let go = 'not-attempted'
+    for (let attempt = 1; attempt <= 3 && !SECTION.test(secText); attempt++) {
+      await openSettings()
+      const d1 = Date.now() + 15000
+      while (Date.now() < d1) {
+        await new Promise((r) => setTimeout(r, 400))
+        if (NAV.test(await bodyText())) break
+      }
+      go = await clickSection()
+      const d2 = Date.now() + 12000
+      while (Date.now() < d2) {
+        await new Promise((r) => setTimeout(r, 400))
+        secText = await bodyText()
+        if (SECTION.test(secText)) break
+      }
+    }
     check('★ 分区页面能打开并渲染出控件', /总开关|按工作区|拦住|放行/.test(secText) && go === 'clicked',
       `正文 ${secText.length} 字符；样例：${secText.replace(/\n+/g, ' | ').slice(0, 200)}`)
     check('用词是「拦住 / 放行」', /拦住/.test(secText) && /放行/.test(secText))

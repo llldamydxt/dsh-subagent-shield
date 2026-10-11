@@ -642,7 +642,22 @@ try {
     check('U4', '状态接口/小窗装配成功', out.includes('接口就绪'), out.split('\n').find((l) => l.includes('接口就绪')) ?? '(未见)')
     check('U4', 'stderr 干净', err.trim() === '', err.trim().slice(0, 200))
 
-    const tokenLine = (out + err).match(/http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s"']+/)
+    // ★ 等启动令牌落盘再取：**端口可连 ≠ 令牌那行已经写进日志**。
+    //   原来这里只读一次日志快照，于是偶尔拿不到令牌 → 静默降级成 2 条弱检查，
+    //   而套件**仍然全绿** —— 最强的端到端断言被悄悄跳过（实测项数在 102/100 之间飘）。
+    //   现在：轮询等待；真等不到就**报红**，不允许静默降级。
+    let tokenLine = null
+    {
+      const deadline = Date.now() + 20000
+      while (Date.now() < deadline) {
+        const snap = readFileSync(outPath, 'utf8') + readFileSync(errPath, 'utf8')
+        tokenLine = snap.match(/http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s"']+/)
+        if (tokenLine) break
+        await new Promise((r) => setTimeout(r, 250))
+      }
+    }
+    check('U4', '★ 拿到启动令牌（端到端强检查的前提）', Boolean(tokenLine),
+      tokenLine ? tokenLine[0].replace(/token=[^\s"']+/, 'token=<略>') : '20 秒内日志里始终没有 ?token= 链接')
     const probe = async (p, cookie) => {
       try {
         const r = await fetch(`http://127.0.0.1:3099${p}`, { headers: cookie ? { cookie } : {} })
@@ -663,8 +678,9 @@ try {
       try { const j = JSON.parse(st2.body); ok = j.plugin === 'dsh-subagent-shield' } catch { }
       check('U4', '认证后 /status 返回正确 JSON', st2.code === 200 && ok, `code=${st2.code}`)
     } else {
-      check('U4', '拿不到启动令牌，改用"路由是否存在"的方式判定', true, '未在日志里找到 ?token= 链接')
-      check('U4', '/status 路由已被认证层接管（非 404）', statusNoAuth.code !== 404, `status=${statusNoAuth.code} bogus=${bogus.code}`)
+      // 真降级了就把"没测到"记成**失败**，别让一次全绿掩盖掉最强的断言
+      check('U4', '（降级）端到端强检查没跑成', false, '未在日志里找到 ?token= 链接')
+      check('U4', '/status 路由已被认证层接管（非 404，弱检查）', statusNoAuth.code !== 404, `status=${statusNoAuth.code} bogus=${bogus.code}`)
     }
     try { child.kill() } catch { }
     spawnSync('cmd', ['/c', 'taskkill', '/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
