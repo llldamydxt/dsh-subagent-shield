@@ -22,5 +22,24 @@
       ]
     }
   },
-  "license": "MIT"
+  "license": "MIT",
+  "author": "llldamydxt",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/llldamydxt/dsh-subagent-shield.git"
+  },
+  "homepage": "https://github.com/llldamydxt/dsh-subagent-shield#readme",
+  "bugs": {
+    "url": "https://github.com/llldamydxt/dsh-subagent-shield/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "subagent",
+    "isolation",
+    "sandbox",
+    "security",
+    "privacy"
+  ]
 }
