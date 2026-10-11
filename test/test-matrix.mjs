@@ -415,6 +415,14 @@ try {
         home: HOME, auditFile: '', rules: R_LAB, cats: CAT_SETS[0][1], guardShellText: true,
         window: WIN_A, caller: 'sub-b', label: 'Arm B of demo',
       }))
+    // ★ 拒绝文案要按**实际配的那一种归属**说
+    //   （踩过：纯标签规则被拒时提示却说"未指定归属窗口"，排查时会被带偏）
+    check('M9 ★ 纯标签规则的拒绝文案点明是标签不匹配',
+      /标签/.test(String(callL(`${ARM_B}\\out.json`, { window: WIN_A, caller: 'sub-a', label: 'Arm A' })?.reason ?? '')),
+      String(callL(`${ARM_B}\\out.json`, { window: WIN_A, caller: 'sub-a', label: 'Arm A' })?.reason ?? '').slice(0, 80))
+    check('M9 ★ 真没设归属时才说"没设归属"',
+      /没设归属/.test(String(call(`${ARM_B}\\out.json`, WIN_A, R_B_NOOWNER)?.reason ?? '')),
+      String(call(`${ARM_B}\\out.json`, WIN_A, R_B_NOOWNER)?.reason ?? '').slice(0, 80))
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
