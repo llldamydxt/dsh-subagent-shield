@@ -302,10 +302,12 @@ try {
   check('A', '★ 边界：直白写出路径 → 拦', Boolean(obf(`Get-Content "${P}"`)))
   check('A', '★ 边界：只藏目录、露出文件名 → 仍被拦（文件名模式也是针）',
     Boolean(obf(`$p = '${unitHome}\\sess' + 'ions\\${WS_A}\\${SID_A}\\session.v4.jsonl.zstd'; Get-Content $p`)))
-  check('A', '★ 边界：目录和文件名都拆开拼接 → 穿过（文本匹配的固有缺陷）',
-    obf(`$d = '${unitHome}\\sess' + 'ions\\${WS_A}\\${SID_A}'; $f = 'sess' + 'ion.v4.jsonl.zstd'; Get-Content ($d + '\\' + $f)`) === null)
+    // ★ 这条曾经是「穿过」；加了朴素去混淆还原（把 ' + ' 接起来）之后**被拦住了**。
+    check('A', '★ 边界：目录和文件名都拆开拼接 → 现在被拦（去混淆还原生效）',
+      Boolean(obf(`$d = '${unitHome}\\sess' + 'ions\\${WS_A}\\${SID_A}'; $f = 'sess' + 'ion.v4.jsonl.zstd'; Get-Content ($d + '\\' + $f)`)))
   check('A', '★ 边界：[char] 编码构造路径 → 穿过', obf('$p = [char]67 + [char]58 + [char]92; Get-Content $p') === null)
-  check('A', '★ 边界：base64 还原路径 → 穿过', obf('$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\'QzpcXHg=\')); Get-Content $p') === null)
+    check('A', '★ 边界：base64 还原路径 → 仍不拦，但记 warn（留痕）',
+      (() => { const r = obf('$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\'QzpcXHg=\')); Get-Content $p'); return Boolean(r?.warn) && r.reason === undefined })())
   check('A', '★ 误报：只打印路径、零文件访问 → 也会被拦（子代理实测确认）', Boolean(obf(`Write-Output '${P}'`)))
   check('A', '★ 误报边界：裸词 sessions / projcache 不被拦', obf("Write-Output 'sessions projcache DECOY'") === null)
 

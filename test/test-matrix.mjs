@@ -522,6 +522,12 @@ try {
       !sh(`Get-Content "${P1}"`, { caller: 'sub-b' }, { ownState: { version: 1, owned: OWN.owned, shared: ['C:\\lab\\out'] } }))
     check('M10 命令族：开关关掉就不管', !sh(`Get-Content "${P1}"`, { caller: 'sub-b' }, { autoOwnWrites: false }))
     check('M10 命令族：无关命令不受影响', !sh('Get-Date', { caller: 'sub-b' }))
+    // ★ 目录级连坐**只在「列/读」动作下**才拦 —— 否则在公共产物目录里批量校验自己的产物会被误伤（01 实测）
+    check('M10 ★ 只提到那个目录、不做枚举 → 不拦（修误伤）',
+      !sh('Set-Location "C:\\lab\\out"; Write-Output hello', { caller: 'sub-b' }),
+      String(sh('Set-Location "C:\\lab\\out"; Write-Output hello', { caller: 'sub-b' })?.reason ?? '(放行)').slice(0, 60))
+    check('M10 ★ 一旦做枚举（Get-ChildItem）→ 仍然拦',
+      sh('Get-ChildItem "C:\\lab\\out"', { caller: 'sub-b' })?.kind === 'owned')
   }
 
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）

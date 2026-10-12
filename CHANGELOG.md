@@ -1,5 +1,36 @@
 # 变更记录
 
+## [0.8.0] — 2026-10-12
+
+### 补漏：针对一次独立对抗性验证的结果（对照实验 01）
+
+那一轮验证的结论对本插件不利，但指出的问题都是真的。这一版按"值不值得做"逐条落地：
+
+| # | 改了什么 | 为什么 |
+|---|---|---|
+| ② | **`%DSH_HOME%` 默认全拒**（工作区子树除外），新增开关 `denyHomeByDefault` | 原来是"点名保护几类目录"——而**清单不可能完备**：实测漏了 `attachments`／`cache\attachments\request-images`／`llm-deepseek\files-v3.json`／`logs` 四条，其中两条是**整幅内容**（别的会话的原图与请求截图）。改成默认全拒后，这类"又漏一条"不再出现 |
+| ③ | **账本加 `warn`**（`kind=bypass-suspect`）+ **篡改可检测** | 最要命的发现是「**成功的偷在账本里零痕迹**」。现在对"码点拼接／zstd 解压／base64／出现 `.dsh`"记一条 warn；并在 `/status` 给出 `rowsAtBoot / appended / expected / actual / tampered` —— 文件比应有的短就是被动过 |
+| ④ | **归属判定的目录连坐收敛**：只在「列/读」动作（`Get-ChildItem`/`ls`/`gc`/`type`…）下才整条拒 | 原来子代理在公共产物目录里**批量校验自己的产物**也会被整条拒（实测误伤） |
+| ① | **朴素去混淆还原**（`[char]NN` / `String.fromCharCode` / `\xNN` / 字符串相加）后再做文本匹配 | 实测里 `String.fromCharCode` 拼 `sessions` 就能绕过。⚠️ **只是提高成本**：变量、base64、`Resolve-Path`、`cmd /c` 套壳仍可绕 —— 永远不是边界 |
+| ⑤ | 设置页**最上面**放"这是策略围栏不是内核边界"的声明 | 预期管理：别把它当安全边界用 |
+| ⑥ | 说明书与协议补：**子代理不能再开子代理**（`maxDepth 1`），双臂必须父会话直派 | 01 的 Runner 就是栽在这 |
+
+### ⓪ 已查证：宿主层**没有**读隔离（所以"真隔离"不在这层）
+
+查了 `@deepseek-ai/dsh-sandbox-policy` / `dsh-sandbox-local` / `dsh-sandbox-windows-acl`：
+
+- 三种模式 `read-only` / `workspace-write` / `danger-full-access` 的文案**全部只谈"修改文件"**
+- Windows 后端自述是 **write-restriction**（restricted-token + capability-SID **write** allowlist）
+- `dsh-sandbox-local` 的模块文档明写 **「reads stay unconfined」**；源码里 `file-write*` 3 处、`file-read` **0 处**
+- Linux 用 Landlock（整盘 `readOnly`）、macOS 用 seatbelt（`allow default` + `deny file-write*`）—— 都只禁写
+
+⇒ 子代理读得到盘是**设计如此**。想要"读也隔离"，只能换安全主体。
+
+### 测试
+
+更新了三条原本钉"旧边界"的断言（行为变了就该改，不是把测试改成绿的）：
+拆开拼接**现在被拦**、base64**现在记 warn**、`%DSH_HOME%` **现在默认全拒**（并补了开关关掉后的对照）。
+
 ## [0.7.3] — 2026-10-12
 
 ### 新增文档：`docs/提示词模板.md` —— 日常跑对照实验直接抄的那份

@@ -459,6 +459,8 @@ try {
     mode: { get: () => o.mode ?? 'all' }, dshHome: { get: () => unitHome }, auditFile: { get: () => '' },
     protectSessions: { get: () => true }, protectProjcache: { get: () => true },
     protectCredentials: { get: () => true }, guardShellText: { get: () => true }, auditEnabled: { get: () => true },
+    autoOwnWrites: { get: () => o.autoOwnWrites ?? true },
+    denyHomeByDefault: { get: () => o.denyHomeByDefault ?? true },
   })
   let hErr = null
   try { hostMod.apply(hostCtx, hostCfg()) } catch (e) { hErr = e }
@@ -619,7 +621,26 @@ try {
   })
   let passed = false
   const d1 = await pre.fn(subAt('ws-other', 's1'), async () => { passed = true; return { kind: 'allow' } })
-  check('U3', '★ 默认不保护后，未点名工作区的会话 → 放行（规则真的生效）', d1?.kind !== 'deny' && passed === true, JSON.stringify(d1))
+    // ★ 语义变更（v0.8.0）：%DSH_HOME% 改成默认全拒 —— 即使按类别的保护全关、默认策略设成 allow，
+    //   宿主数据目录仍然拦（否则就得维护一份永远补不完的清单）。
+    check('U3', '★★ 默认全拒：%DSH_HOME% 下的路径 → 仍拦（与按类别开关无关）',
+      d1?.kind === 'deny' && passed === false, String(d1?.reason ?? '').split('\n')[0])
+    {
+      const listeners2 = []
+      const ctx2 = {
+        on: (e, fn) => { listeners2.push({ e, fn }); return () => { } },
+        commands: { register: () => () => { } },
+        inject: (d, cb) => { cb(childCtx); return () => { } },
+      }
+      hostMod.apply(ctx2, hostCfg({ denyHomeByDefault: false }))
+      const pre2 = listeners2.find((l) => l.e === 'tools/pre-execute')
+      if (pre2) {
+        let passed2 = false
+        const d1b = await pre2.fn(subAt('ws-other', 's9'), async () => { passed2 = true; return { kind: 'allow' } })
+        check('U3', '开关关掉（denyHomeByDefault=false）→ 回到按类别判定，未点名工作区放行',
+          d1b?.kind !== 'deny' && passed2 === true, String(d1b?.reason ?? '').split('\n')[0])
+      }
+    }
   const d2 = await pre.fn(subAt('ws-keep', 's2'), async () => ({ kind: 'allow' }))
   check('U3', '★ 点名的工作区仍然拦', d2?.kind === 'deny', String(d2?.reason ?? '').split('\n')[0])
 
