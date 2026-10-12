@@ -1,6 +1,6 @@
 {
   "name": "dsh-subagent-shield",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "description": "子代理信息隔断：禁止子代理读取父会话/兄弟会话的落盘记录、投影缓存与凭据文件；带设置页配置卡与可拖动状态小窗",
   "type": "module",

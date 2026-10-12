@@ -644,6 +644,33 @@ try {
   const d2 = await pre.fn(subAt('ws-keep', 's2'), async () => ({ kind: 'allow' }))
   check('U3', '★ 点名的工作区仍然拦', d2?.kind === 'deny', String(d2?.reason ?? '').split('\n')[0])
 
+  // ★★ 归属登记表的**篡改可检测**：登记一条 → 把文件改小 → /status 的 own.tampered 应为 true
+  {
+    const ownsPath = join(unitHome, 'subagent-shield-owns.json')
+    const subWrite = {
+      name: 'write', args: { file_path: join(unitHome, 'probe-owned.txt'), content: 'x' },
+      agent: { session: { header: { id: 'sub-own-1', origin: 'subagent', delegationDepth: 1, parentSession: 'w1', cwd: unitHome } } },
+    }
+    let okW = false
+    await pre.fn(subWrite, async () => { okW = true; return { kind: 'allow' } })
+    const stA = await callRoute(statusRoute)
+    let ownA = null
+    try { ownA = JSON.parse(stA.body).own } catch { }
+    check('U3', '★★ 子代理写入后归属表落盘，且未篡改时 tampered=false',
+      okW === true && ownA && ownA.total >= 1 && ownA.tampered === false,
+      JSON.stringify({ total: ownA?.total, tampered: ownA?.tampered, entriesAtBoot: ownA?.entriesAtBoot }))
+    if (existsSync(ownsPath)) {
+      writeFileSync(ownsPath, JSON.stringify({ version: 1, owned: {}, shared: [] }, null, 2) + '\n', 'utf8')
+      const stB = await callRoute(statusRoute)
+      let ownB = null
+      try { ownB = JSON.parse(stB.body).own } catch { }
+      check('U3', '★★ 把归属表改小 → /status 报 tampered=true（被动手能查出来）',
+        ownB && ownB.tampered === true, JSON.stringify({ total: ownB?.total, tampered: ownB?.tampered }))
+    } else {
+      check('U3', '★★ 把归属表改小 → tampered=true（文件不存在，无法测）', false, '归属表没落盘')
+    }
+  }
+
   // ───────────────────────────────────── U4 沙箱真启动
   console.log('\n── U4 沙箱真启动（临时 DSH_HOME）')
   if (!DSH_BIN) { check('U4', '找到 dsh CLI', false, '未找到') }
