@@ -626,6 +626,16 @@ try {
       check('M10 护栏关着 → 脚本正文检查也不生效（归同一层）', !mk({ guardShellText: false }))
     }
 
+    // ★★ 回归：臂A 实测放行过的那条命令（[char] 拼路径 + 尾随分号）
+    {
+      const cmd8 = "$p = [char]67 + [char]58 + [char]92 + 'Users' + [char]92 + 'X' + [char]92 + 'Desktop' + [char]92 + '.dsh'; Get-ChildItem $p"
+      check('M10 ★★ [char] 拼出的 .dsh（尾随分号）→ 拦（分隔符缺口已补）',
+        mod.evaluateCall({
+          name: 'pwsh', args: { command: cmd8 }, isSubagent: true, scope: 'subagents',
+          home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true, autoOwnWrites: false,
+        })?.kind === 'shell')
+    }
+
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
