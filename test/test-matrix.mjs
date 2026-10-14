@@ -576,6 +576,37 @@ try {
         mod.isOwnerExempt('', '复核') === false &&
         mod.isOwnerExempt('臂A', '') === false)
     }
+    // ★★ 解耦：护栏（guardShellText）关着时，命令族的**归属检查**仍然生效
+    //    以前整个命令族分支都挂在 guardShellText 下 —— 关护栏 = 连臂间隔离也一起关了。
+    {
+      const DP = 'C:/lab/out/decouple.js'
+      const DOWN = {
+        version: 1, shared: [],
+        owned: { [mod.normalizePath(DP)]: { by: 'sub-a', label: '臂A', ts: '2026-10-11T00:00:00Z' } },
+      }
+      const DC = (extra = {}) => mod.evaluateCall({
+        name: 'pwsh', args: { command: 'type "' + DP + '"' }, isSubagent: true, scope: 'subagents',
+        home: HOME, auditFile: '', rules: {}, cats: {}, autoOwnWrites: true, ownState: DOWN,
+        caller: 'sub-b', label: '臂B', ...extra,
+      })
+      check('M10 ★★ guardShellText=false 时，命令族归属检查仍然拦（已解耦）',
+        DC({ guardShellText: false })?.kind === 'owned')
+      check('M10 护栏开着时同样拦', DC({ guardShellText: true })?.kind === 'owned')
+      const HOME_CMD = 'Get-ChildItem "C:/Users/x/.dsh/sessions"'
+      check('M10 护栏关着 → 文本针不生效（这条敏感命令放行）',
+        !mod.evaluateCall({
+          name: 'pwsh', args: { command: HOME_CMD }, isSubagent: true, scope: 'subagents',
+          home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: false,
+          autoOwnWrites: false, caller: 'sub-b', label: '臂B',
+        }))
+      check('M10 同一命令、护栏开着 → 拦（文本针生效）',
+        mod.evaluateCall({
+          name: 'pwsh', args: { command: HOME_CMD }, isSubagent: true, scope: 'subagents',
+          home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true,
+          autoOwnWrites: false, caller: 'sub-b', label: '臂B',
+        })?.kind === 'shell')
+    }
+
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
