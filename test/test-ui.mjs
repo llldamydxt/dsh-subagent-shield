@@ -5,6 +5,20 @@
  *   U1 配置卡（无头）    假 window / 假 React / 假 ctx：模块 id、卡片 key、组件能渲染、改值会写回
  *   U2 小窗脚本（无头）  假 DOM / 假 localStorage / 假 fetch：挂载、拖动、收起、关闭、拉数据
  *   U3 宿主接口（无头）  假 ctx + 假 webServer：两个路由、index 注入、/status 数据与计数
+  // ★★ 配置变更留痕（configDrift）：字段存在 + 没有改动时不误报
+  {
+    const s1 = await callRoute(statusRoute)
+    let p1 = null
+    try { p1 = JSON.parse(s1.body) } catch { }
+    check('U3', '★★ /status 带出 configDrift 字段（配置变更留痕）',
+      p1 !== null && Object.prototype.hasOwnProperty.call(p1, 'configDrift'))
+    check('U3', '★★ 配置没改动 → configDrift 为 null（不误报）', p1?.configDrift === null)
+    const s2 = await callRoute(statusRoute)
+    let p2 = null
+    try { p2 = JSON.parse(s2.body) } catch { }
+    check('U3', '★★ 连续两次 /status 不会凭空产生 warn（warns 仍为 0）', p2?.ledger?.warns === 0)
+  }
+
  *   U4 沙箱真启动        临时 DSH_HOME 装上插件起 3099，验挂载日志与路由可达性
  *
  * 全程在 %TEMP%\dsh-isolated-tests\ 沙箱里跑，不碰正在用的 DSH。
