@@ -607,6 +607,25 @@ try {
         })?.kind === 'shell')
     }
 
+    // ★★ 前置活动：子代理**写脚本**时，正文里出现宿主数据路径 → 拦
+    //    为什么：程序化读盘必须先写脚本/跑命令。以前只查命令行文本，"把路径写进脚本 +
+    //    用干净命令跑它"就完全无声通过（作者实测里就是这么绕的）。
+    {
+      const HB = ['.d', 'sh'].join('')
+      const HOST = 'C:/Users/X/' + HB
+      const mk = (extra = {}) => mod.evaluateCall({
+        name: 'write',
+        args: { file_path: 'C:/lab/probe.mjs', content: "fs.readdirSync('" + HOST + "/sessions')" },
+        isSubagent: true, scope: 'subagents', home: HOME, auditFile: '', rules: {}, cats: {},
+        guardShellText: true, autoOwnWrites: false, ...extra,
+      })
+      check('M10 ★★ 子代理写含宿主路径的脚本 → 拦（kind=script）', mk()?.kind === 'script')
+      check('M10 父会话写同样的脚本 → 放行（开发/运维不受影响）', !mk({ isSubagent: false }))
+      check('M10 子代理写干净脚本 → 放行（不误报）',
+        !mk({ args: { file_path: 'C:/lab/ok.mjs', content: 'console.log(1 + 1)' } }))
+      check('M10 护栏关着 → 脚本正文检查也不生效（归同一层）', !mk({ guardShellText: false }))
+    }
+
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
