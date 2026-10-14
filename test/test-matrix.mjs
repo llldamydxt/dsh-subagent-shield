@@ -530,6 +530,52 @@ try {
       sh('Get-ChildItem "C:\\lab\\out"', { caller: 'sub-b' })?.kind === 'owned')
   }
 
+    // ★★ 标签豁免：复核者不受归属层管辖（但**不**豁免 %DSH_HOME% 默认全拒）
+    {
+      const EP = 'C:\\lab\\out\\exempt-probe.js'
+      const EOWN = {
+        version: 1, shared: [],
+        owned: { [mod.normalizePath(EP)]: { by: 'sub-a', label: '臂A', ts: '2026-10-11T00:00:00Z' } },
+      }
+      const EC = (who, extra = {}) => mod.evaluateCall({
+        name: 'read', args: { file_path: EP }, isSubagent: true, scope: 'subagents',
+        home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true,
+        autoOwnWrites: true, ownState: EOWN, ownerExemptLabels: '复核,verify,review,audit', ...who, ...extra,
+      })
+      check('M10 ★★ 复核者（标签含 复核）读别人的产物 → 放行（豁免）',
+        !EC({ caller: 'sub-r', label: '独立复核员' }))
+      check('M10 ★★ 复核者（英文 review）→ 也放行',
+        !EC({ caller: 'sub-r', label: 'Adversarial validity review' }))
+      check('M10 非复核者（标签不含关键词）→ 仍然拦',
+        EC({ caller: 'sub-b', label: '臂B' })?.kind === 'owned')
+      check('M10 没标签 → 不豁免（宁严勿松）',
+        EC({ caller: 'sub-b', label: null })?.kind === 'owned')
+      check('M10 ★★ 豁免**只管归属**：复核者读 %DSH_HOME% 记录 → 仍然拦（默认全拒）',
+        (() => {
+          const r = mod.evaluateCall({
+            name: 'read', args: { file_path: `${HOME}\\sessions\\ws\\sid\\session.v4.jsonl.zstd` },
+            isSubagent: true, scope: 'subagents', home: HOME, auditFile: '', rules: {}, cats: {},
+            guardShellText: true, autoOwnWrites: true, ownState: EOWN, denyHome: true,
+            ownerExemptLabels: '复核,verify', caller: 'sub-r', label: '独立复核员',
+          })
+          return r?.kind === 'home'
+        })())
+      check('M10 可配：把关键词换成别的，旧关键词就不再豁免',
+        EC({ caller: 'sub-r', label: '独立复核员' }, { ownerExemptLabels: 'zzz' })?.kind === 'owned')
+      check('M10 ★★ 复核者也不受**命令族**归属管辖（可以 cat 别人的产物）',
+        !mod.evaluateCall({
+          name: 'pwsh', args: { command: `type "${EP}"` }, isSubagent: true, scope: 'subagents',
+          home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true,
+          autoOwnWrites: true, ownState: EOWN, ownerExemptLabels: '复核,verify',
+          caller: 'sub-r', label: '独立复核员',
+        }))
+      check('M10 isOwnerExempt 的直接行为',
+        mod.isOwnerExempt('独立复核员', '复核,verify') === true &&
+        mod.isOwnerExempt('Adversarial review', 'verify,review') === true &&
+        mod.isOwnerExempt('臂A', '复核,verify') === false &&
+        mod.isOwnerExempt('', '复核') === false &&
+        mod.isOwnerExempt('臂A', '') === false)
+    }
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
