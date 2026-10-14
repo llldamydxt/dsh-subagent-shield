@@ -3,6 +3,9 @@
 > 给 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）用的一颗插件：
 > **拦住子代理读取父会话 / 兄弟子代理的落盘记录、投影缓存与宿主凭据**。
 > 带设置页独立分区（颗粒度到工作区与窗口）和一个常驻状态小窗。
+>
+> ⚠️ **先看这一句**：它是**工具层策略围栏，不是内核边界** —— 挡得住子代理**顺手**去翻，挡不住**有心**（自己写代码读盘）。**下载即用，不需要虚拟机**；只有当你要**对外声称"拿不到"**时，才需要换安全主体（VM / 另一个 OS 账户 / 另一台机器）。
+> 详见 [信息流覆盖表](docs/信息流覆盖表.md) 与 [硬隔离怎么做](docs/硬隔离怎么做.md)。
 
 **English TL;DR** — A DSH plugin that blocks subagents from reading the parent
 session's on-disk transcript (`sessions/**`), the projection cache
