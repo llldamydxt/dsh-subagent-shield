@@ -636,6 +636,23 @@ try {
         })?.kind === 'shell')
     }
 
+    // ★★ 读盘类 API：只 warn、不拦 —— 让「有人在用程序读盘」每次都留痕
+    {
+      const r = mod.evaluateCall({
+        name: 'pwsh',
+        args: { command: 'node -e require-js-fs-readFileSync-C-tmp-x' },
+        isSubagent: true, scope: 'subagents', home: HOME, auditFile: '', rules: {}, cats: {},
+        guardShellText: true, autoOwnWrites: false,
+      })
+      check('M10 ★★ 出现 readFileSync → 记为 warn（不拦）', Boolean(r?.warn) && r.reason === undefined)
+      check('M10 warn 的 kind 是 bypass-suspect', r?.warn?.kind === 'bypass-suspect')
+      check('M10 干净命令（无读盘 API）→ 不 warn',
+        !mod.evaluateCall({
+          name: 'pwsh', args: { command: 'Write-Output hello' }, isSubagent: true, scope: 'subagents',
+          home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true, autoOwnWrites: false,
+        }))
+    }
+
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
