@@ -709,6 +709,47 @@ try {
       check('M10 列整个共用目录（真枚举）→ 仍然拦', shc("Get-ChildItem 'C:\\lab\\shared'")?.kind === 'owned')
     }
 
+    // ★★ 回归（第二轮独立验证 §4.2/§5.3）：base64 同调用内解码并使用
+    {
+      const z = Buffer.from(HOME + '\\sessions').toString('base64')
+      const cmd = "$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + z + "')); Get-ChildItem $p"
+      const r = mod.evaluateCall({
+        name: 'pwsh', args: { command: cmd }, isSubagent: true, scope: 'subagents',
+        home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true, autoOwnWrites: false,
+      })
+      check('M10 ★★ 回归：base64 解码后用（同一次调用）→ 拦', Boolean(r?.reason), String(r?.kind ?? '放行'))
+    }
+
+    // ★★ 回归（第二轮 §5.1）：$env:DSH_HOME 顶层枚举（0.9.4 放行过）
+    {
+      const r = mod.evaluateCall({
+        name: 'pwsh', args: { command: 'Get-ChildItem "$env:DSH_HOME" -Force' }, isSubagent: true, scope: 'subagents',
+        home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true, autoOwnWrites: false,
+      })
+      check('M10 ★★ 回归：$env:DSH_HOME 顶层枚举 → 拦', Boolean(r?.reason), String(r?.kind ?? '放行'))
+    }
+
+    // ★★ 回归（第二轮 §5.4）：scope=all 下父会话也受归属管辖（自己窗口的除外）
+    {
+      const P_OTHER = 'C:\\lab\\w2arm\\out.txt'
+      const P_MINE = 'C:\\lab\\w1arm\\out.txt'
+      const ST = {
+        version: 1, shared: [],
+        owned: {
+          [mod.normalizePath(P_OTHER)]: { by: 'sub-w2', label: '别的窗口的臂', win: 'w2', ts: '2026-10-14T00:00:00Z' },
+          [mod.normalizePath(P_MINE)]: { by: 'sub-w1', label: '我的臂', win: 'w1', ts: '2026-10-14T00:00:00Z' },
+        },
+      }
+      const pc = (file, extra = {}) => mod.evaluateCall({
+        name: 'read', args: { file_path: file }, isSubagent: false, scope: 'all',
+        home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true, autoOwnWrites: true,
+        ownState: ST, window: 'w1', caller: 'session-w1', label: null, ...extra,
+      })
+      check('M10 ★★ 回归：scope=all 下父会话读别的窗口子代理的产物 → 拦', pc(P_OTHER)?.kind === 'owned')
+      check('M10 ★★ scope=all 下父会话读自己窗口子代理的产物 → 放行', !pc(P_MINE))
+      check('M10 回归：scope=subagents 时父会话仍免管归属 → 放行', !pc(P_OTHER, { scope: 'subagents' }))
+    }
+
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
