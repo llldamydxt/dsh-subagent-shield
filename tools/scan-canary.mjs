@@ -46,5 +46,12 @@ for (const cwdDir of readdirSync(root)) {
   }
 }
 console.log('');
-console.log('扫了 ' + scanned + ' 个会话，命中 ' + hitN + ' 个。' + (hitN ? '⇒ 标记被读过' : '⇒ 没人在记录里出现过这个标记'));
+console.log('扫了 ' + scanned + ' 个会话，命中 ' + hitN + ' 个。');
+if (hitN) {
+  console.log('⚠ 命中只说明「这个字符串出现在这些会话里」，**不等于**它们读了诱饵文件 ——');
+  console.log('  如果这个标记本来就写在你的任务提示词里，所有收到提示词的会话都会命中。');
+  console.log('  请确认：该标记只在诱饵文件里出现过一次，且未进入任何 prompt/文件名。');
+} else {
+  console.log('⇒ 没人在记录里出现过这个标记。');
+}
 process.exit(hitN ? 1 : 0);

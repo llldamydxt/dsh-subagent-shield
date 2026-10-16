@@ -542,10 +542,15 @@ try {
         home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true,
         autoOwnWrites: true, ownState: EOWN, ownerExemptLabels: '复核,verify,review,audit', ...who, ...extra,
       })
-      check('M10 ★★ 复核者（标签含 复核）读别人的产物 → 放行（豁免）',
-        !EC({ caller: 'sub-r', label: '独立复核员' }))
-      check('M10 ★★ 复核者（英文 review）→ 也放行',
-        !EC({ caller: 'sub-r', label: 'Adversarial validity review' }))
+      check('M10 ★★ 复核者（标签以 [复核] 开头）→ 放行（豁免）',
+        !EC({ caller: 'sub-r', label: '[复核] 独立复核员' }))
+      check('M10 ★★ 复核者（【review】全角括号）→ 也放行',
+        !EC({ caller: 'sub-r', label: '【review】Adversarial validity review' }))
+      // ★★ 回归（独立验证 §8.4）：只是**提到**关键词 → 不再豁免
+      check('M10 ★★ 回归：标签只是提到「验证」→ 不豁免（不再把钥匙挂门口）',
+        EC({ caller: 'sub-r', label: '实现并验证 X' })?.kind === 'owned')
+      check('M10 ★★ 回归：普通「独立复核员」不带标记 → 不豁免',
+        EC({ caller: 'sub-r', label: '独立复核员' })?.kind === 'owned')
       check('M10 非复核者（标签不含关键词）→ 仍然拦',
         EC({ caller: 'sub-b', label: '臂B' })?.kind === 'owned')
       check('M10 没标签 → 不豁免（宁严勿松）',
@@ -567,11 +572,13 @@ try {
           name: 'pwsh', args: { command: `type "${EP}"` }, isSubagent: true, scope: 'subagents',
           home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true,
           autoOwnWrites: true, ownState: EOWN, ownerExemptLabels: '复核,verify',
-          caller: 'sub-r', label: '独立复核员',
+          caller: 'sub-r', label: '[复核] 独立复核员',
         }))
       check('M10 isOwnerExempt 的直接行为',
-        mod.isOwnerExempt('独立复核员', '复核,verify') === true &&
-        mod.isOwnerExempt('Adversarial review', 'verify,review') === true &&
+        mod.isOwnerExempt('[复核] 独立复核员', '复核,verify') === true &&
+        mod.isOwnerExempt('【review】X', 'verify,review') === true &&
+        mod.isOwnerExempt('独立复核员', '复核,verify') === false &&
+        mod.isOwnerExempt('实现并验证 X', '验证,verify') === false &&
         mod.isOwnerExempt('臂A', '复核,verify') === false &&
         mod.isOwnerExempt('', '复核') === false &&
         mod.isOwnerExempt('臂A', '') === false)
@@ -651,6 +658,55 @@ try {
           name: 'pwsh', args: { command: 'Write-Output hello' }, isSubagent: true, scope: 'subagents',
           home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true, autoOwnWrites: false,
         }))
+    }
+
+    // ★★ 回归（独立验证 §8.1/§8.9）：变量赋值 + 拼接 构造受保护路径
+    {
+      const CP = 'C:\\lab\\臂X'
+      const R_CP = { defaultPolicy: 'protect', workspaces: {}, windows: {}, protectedPaths: [{ path: CP, label: '臂X' }] }
+      const cp = (cmd) => mod.evaluateCall({
+        name: 'pwsh', args: { command: cmd }, isSubagent: true, scope: 'subagents',
+        home: HOME, auditFile: '', rules: R_CP, cats: {}, guardShellText: true, autoOwnWrites: false,
+        caller: 'sub-b', label: '臂B',
+      })
+      check('M10 ★★ 字面写受保护目录 → 拦', cp("Get-ChildItem 'C:\\lab\\臂X' -Force")?.kind === 'custom')
+      check('M10 ★★ 回归：拆成两段拼接（$a+$b）→ 也必须拦',
+        cp("$a='C:\\lab\\'; $b='臂X'; Get-ChildItem ($a+$b) -Force")?.kind === 'custom')
+      check('M10 ★★ 回归：码点拼目录名 → 也必须拦',
+        cp("$d=[char]0x81C2+[char]0x58; Get-ChildItem ('C:\\lab\\'+$d) -Force")?.kind === 'custom')
+      check('M10 ★★ 回归：裸目录名（相对路径）→ 也拦',
+        cp("Get-ChildItem .\\臂X -Force")?.kind === 'custom')
+      check('M10 与受保护目录无关的命令 → 放行', !cp("Write-Output hello"))
+      check('M10 ★★ 回归：$env:DSH_HOME 展开后按宿主目录拦',
+        Boolean(mod.evaluateCall({
+          name: 'pwsh', args: { command: 'node x.mjs "$env:DSH_HOME"' }, isSubagent: true, scope: 'subagents',
+          home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true, autoOwnWrites: false,
+        })?.reason))
+      check('M10 expandVars 的直接行为',
+        mod.expandVars("$d=[char]0x81C2+[char]0x58", 'C:\\x').includes('臂X') &&
+        mod.expandVars('node y "$env:DSH_HOME"', 'C:\\Users\\X\\').includes('C:\\Users\\X'))
+    }
+
+    // ★★ 回归（独立验证 §8.3）：共用目录里读**自己**的产物不该被连坐
+    {
+      const OWNF = 'C:\\lab\\shared\\mine.js'
+      const OTHF = 'C:\\lab\\shared\\theirs.js'
+      const SH = {
+        version: 1, shared: [],
+        owned: {
+          [mod.normalizePath(OWNF)]: { by: 'sub-b', label: '臂B', ts: '2026-10-14T00:00:00Z' },
+          [mod.normalizePath(OTHF)]: { by: 'sub-a', label: '臂A', ts: '2026-10-14T00:00:00Z' },
+        },
+      }
+      const shc = (cmd) => mod.evaluateCall({
+        name: 'pwsh', args: { command: cmd }, isSubagent: true, scope: 'subagents',
+        home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true, autoOwnWrites: true,
+        ownState: SH, caller: 'sub-b', label: '臂B',
+      })
+      check('M10 ★★ 回归：共用目录里 Get-Content <自己的文件> → 放行（原来被连坐）',
+        !shc("Get-Content 'C:\\lab\\shared\\mine.js'"))
+      check('M10 点名别人的文件 → 仍然拦', shc("Get-Content 'C:\\lab\\shared\\theirs.js'")?.kind === 'owned')
+      check('M10 列整个共用目录（真枚举）→ 仍然拦', shc("Get-ChildItem 'C:\\lab\\shared'")?.kind === 'owned')
     }
 
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
