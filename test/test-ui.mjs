@@ -293,7 +293,7 @@ try {
 
   const header = root?.children?.[0]
   const body = root?.children?.[1]
-  const stateLine = body?.children?.[0]
+  const stateLine = body?.children?.[1]
   check('U2', '状态行渲染出配置摘要', String(stateLine?.textContent ?? '').includes('subagents'), String(stateLine?.textContent ?? ''))
 
   // ★★ 回归（使用者报「浮窗奇奇怪怪的」）——两个真实缺陷：
@@ -302,7 +302,12 @@ try {
   //   ② 时间戳 `String(iso).slice(11,19)` 取的是 ISO 里的 **UTC** 部分 →
   //      UTC+8 的用户看到的时间少 8 小时（21:46 的拒绝显示成 13:46）。
   {
-    const countLine = String(body?.children?.[1]?.textContent ?? '')
+      // ★★ 告警框必须在最上面（body 第 0 位），无告警时不占位
+      check('U2', '★★ 告警框在最上面且无告警时不显示',
+        String(body?.children?.[0]?.textContent ?? '') === '' &&
+        String(body?.children?.[0]?.style?.display ?? '') === 'none',
+        'display=' + String(body?.children?.[0]?.style?.display ?? ''))
+    const countLine = String(body?.children?.[2]?.textContent ?? '')
     check('U2', '★★ 计数值区分「本次」与「账本历史」',
       countLine.includes('本次拒绝 3 次') && countLine.includes('账本历史 41 次'),
       countLine.slice(0, 120))
@@ -683,6 +688,65 @@ try {
     let p2 = null
     try { p2 = JSON.parse(s2.body) } catch { }
     check('U3', '★★ 连续两次 /status 不会凭空产生 warn（warns 仍为 0）', p2?.ledger?.warns === 0)
+  }
+
+  // ★★ 后端告警：走真钩子触发一次 warn，/status 的 alert.bypass 应当计数
+  {
+    const warnCall = {
+      name: 'pwsh',
+      args: { command: "node -e require('fs').readFileSync('C:/tmp/x')" },
+      agent: { session: { header: { id: 'sub-warn-1', origin: 'subagent', delegationDepth: 1, parentSession: 'w1' } } },
+    }
+    let passedW = false
+    await pre.fn(warnCall, async () => { passedW = true; return { kind: 'allow' } })
+    check('U3', '★★ 读盘 API 的调用被放行但落成 warn（不拦）', passedW === true)
+    const stA = await callRoute(statusRoute)
+    let pA = null
+    try { pA = JSON.parse(stA.body) } catch { }
+    check('U3', '★★ /status 带出 alert.bypass 告警（供小窗红字用）',
+      pA?.alert?.bypass?.count >= 1 && Boolean(pA.alert.bypass.last?.ts),
+      JSON.stringify(pA?.alert ?? null).slice(0, 140))
+    check('U3', '告警里带上原因与工具（小窗要显示）',
+      String(pA?.alert?.bypass?.last?.why ?? '').length > 0 && pA?.alert?.bypass?.last?.tool === 'pwsh',
+      String(pA?.alert?.bypass?.last?.why ?? '').slice(0, 80))
+  }
+
+  // ★★ 告警渲染：带 alert 的 payload → 红框显示、文字对、圆点变 ⚠、标题栏变红
+  {
+    const domA = makeFakeDom()
+    const payloadA = {
+      config: { enabled: true, scope: 'subagents', mode: 'all' },
+      denied: { total: 0, windows: 0, historyTotal: 0, historyWindows: 0, source: 'session' },
+      recent: [],
+      alert: {
+        bypass: { count: 2, last: { ts: '2026-10-14T12:00:00.000Z', why: 'base64 解码（常见于编码后绕过文本匹配）', tool: 'pwsh' } },
+        config: { count: 0, last: null },
+      },
+    }
+    const gA = {
+      window: domA.win, document: domA.document, localStorage: domA.win.localStorage,
+      fetch: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payloadA) }),
+      requestAnimationFrame: (fn) => { fn(); return 1 }, setInterval: () => 1, clearInterval: () => { }, console,
+    }
+    new Function('window', 'document', 'localStorage', 'fetch', 'requestAnimationFrame', 'setInterval', 'clearInterval', 'console', widgetSrc)(
+      gA.window, gA.document, gA.localStorage, gA.fetch, gA.requestAnimationFrame, gA.setInterval, gA.clearInterval, gA.console)
+    await new Promise((r) => setTimeout(r, 30))
+    const rootA = domA.document.getElementById('dsh-subagent-shield-widget')
+    const bodyA = rootA?.children?.[1]
+    const alertA = bodyA?.children?.[0]
+    check('U2', '★★ 有告警时红框显示（display=block）', alertA?.style?.display === 'block', 'display=' + String(alertA?.style?.display ?? ''))
+    check('U2', '★★ 红框文字点明「试图绕过」并带次数',
+      String(alertA?.textContent ?? '').includes('试图绕过') && String(alertA?.textContent ?? '').includes('2 次'),
+      String(alertA?.textContent ?? '').slice(0, 90))
+    check('U2', '★★ 红框带上原因与本地时间',
+      String(alertA?.textContent ?? '').includes('base64') && /\d\d:\d\d:\d\d/.test(String(alertA?.textContent ?? '')),
+      String(alertA?.textContent ?? '').slice(0, 90))
+    check('U2', '★★ 角落圆点也变成 ⚠（缩起来也看得见）',
+      domA.document.body.children.some((c) => String(c.textContent ?? '') === '⚠'),
+      domA.document.body.children.map((c) => String(c.textContent ?? '').slice(0, 8)).join(' | '))
+    check('U2', '★★ 标题栏变红',
+      String(rootA?.children?.[0]?.style?.background ?? '').includes('220,38,38'),
+      String(rootA?.children?.[0]?.style?.background ?? ''))
   }
 
   // ───────────────────────────────────── U4 沙箱真启动
