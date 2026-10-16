@@ -222,7 +222,7 @@ try {
 
   const r3 = runWidget({ fetch: badFetch, throwOnLocalStorage: false })
   await new Promise((r) => setTimeout(r, 30))
-  const line3 = r3.body.children[0]?.children?.[1]?.children?.[0]?.textContent ?? ''
+  const line3 = r3.body.children[0]?.children?.[1]?.children?.[1]?.textContent ?? ''
   check('B6', 'fetch 失败：不崩，并显示失败提示', r3.threw === null && String(line3).includes('失败'), String(line3).slice(0, 40))
 
   // ★ 回归：脚本跑时 body 还没就绪 → 必须重试，不能直接放弃（v3 的 bug）
