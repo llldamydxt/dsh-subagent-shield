@@ -1,4 +1,4 @@
-# check-after-upgrade.ps1 —— DSH 升级后 30 秒自检
+﻿# check-after-upgrade.ps1 —— DSH 升级后 30 秒自检
 #
 # 为什么需要：DSH 升级会**重新铺 profile**。实测（2026-10-17，DSH 0.2.1-rc.2）：
 #   · 插件版本被回退（装的 0.9.7 → 变回 0.9.6）

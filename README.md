@@ -330,3 +330,28 @@ node test-browser.mjs    #  22 项：**真浏览器**（Edge/Chrome + CDP）验�
 ## 许可证
 
 [MIT](LICENSE)。
+
+---
+
+## 升级 DSH 之后（必读）
+
+**DSH 升级会重新铺 profile**，实测后果（2026-10-17，DSH `0.2.1-rc.2`）：
+
+| 会被改坏什么 | 表现 |
+|---|---|
+| **插件版本被回退** | 装好的 0.9.7 变回 0.9.6 —— 修过的洞又回来了 |
+| **`cordis.patch.yml` 里的开关被重置** | `enabled: false`、`guardShellText: false` —— 插件"看起来在"，其实**完全没在防** |
+
+这两种都不会报错。所以**每次升级 DSH 之后，跑一遍自检**：
+
+```powershell
+pwsh -File tools\check-after-upgrade.ps1
+# 想让它顺便比对版本：
+pwsh -File tools\check-after-upgrade.ps1 -Repo <本仓库路径>
+```
+
+它会检查：装没装、什么版本、入口文件在不在、总开关与命令族护栏开没开；
+并打印**脚本看不到、要你在界面上确认**的两件事（设置页有没有「信息隔断」一节、右下角小窗在不在）。
+
+> 如果它说 `enabled: false`：在设置页把总开关打开，或重跑 `tools\install-shield.ps1`。
+> 如果小窗标题不是 **🚧 信息隔断**，说明跑的还是老版本或插件没加载 —— 重启 DSH。
