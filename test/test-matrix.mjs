@@ -750,6 +750,26 @@ try {
       check('M10 回归：scope=subagents 时父会话仍免管归属 → 放行', !pc(P_OTHER, { scope: 'subagents' }))
     }
 
+    // ★★ 回归（0.9.7 自测踩到的误伤）：父会话 + scope=all，命令只是**提到**某个含他人产物的目录
+    {
+      const OTHER = 'C:\\lab\\shared2\\theirs.txt'
+      const ST2 = {
+        version: 1, shared: [],
+        owned: { [mod.normalizePath(OTHER)]: { by: 'sub-x', label: '臂X', win: 'w2', ts: '2026-10-14T00:00:00Z' } },
+      }
+      const pc = (extra = {}) => mod.evaluateCall({
+        name: 'pwsh', args: { command: 'Test-Path "C:\\lab\\shared2"' }, isSubagent: false, scope: 'all',
+        home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true, autoOwnWrites: true,
+        ownState: ST2, window: 'w1', caller: 'session-w1', label: null, ...extra,
+      })
+      check('M10 ★★ 回归：父会话命令提到含他人产物的目录 → 不拦（文本启发式不套父会话）', !pc())
+      check('M10 ★★ 但父会话按**路径参数**读那个外窗口产物 → 仍然拦', Boolean(mod.evaluateCall({
+        name: 'read', args: { file_path: OTHER }, isSubagent: false, scope: 'all',
+        home: HOME, auditFile: '', rules: {}, cats: {}, guardShellText: true, autoOwnWrites: true,
+        ownState: ST2, window: 'w1', caller: 'session-w1', label: null,
+      })?.reason))
+    }
+
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
