@@ -75,8 +75,8 @@ if (Test-Path $yml) {
     $enabled = & $get 'enabled'
     $guard   = & $get 'guardShellText'
     $scope   = & $get 'scope'
-    if ($enabled -eq 'true') { Ok 'enabled: true（总开关开着）' } else { Bad ('enabled: ' + (if ($enabled) { $enabled } else { '缺失' }) + ' —— 插件会完全不工作') }
-    if ($guard -eq 'true' -or $guard -eq '') { Ok ('guardShellText: ' + (if ($guard) { $guard } else { '默认 true' })) } else { Bad ('guardShellText: ' + $guard + ' —— 命令族护栏是关的') }
+    if ($enabled -eq 'true') { Ok 'enabled: true（总开关开着）' } else { Bad ('enabled: ' + $(if ($enabled) { $enabled } else { '缺失' }) + ' —— 插件会完全不工作') }
+    if ($guard -eq 'true' -or $guard -eq '') { Ok ('guardShellText: ' + $(if ($guard) { $guard } else { '默认 true' })) } else { Bad ('guardShellText: ' + $guard + ' —— 命令族护栏是关的') }
     if ($scope) { Ok ('scope: ' + $scope) } else { Info 'scope 缺省 = subagents（父会话豁免）' }
     Info ('其他键缺失会走默认值；完整清单见 docs\说明书.md「配置项」')
   }
