@@ -187,7 +187,7 @@ try {
   const state = await evalJs(`(() => ({
     text: (document.body.innerText || ''),
     widget: !!document.getElementById('dsh-subagent-shield-widget'),
-    dot: [...document.body.children].some(n => n !== document.getElementById('dsh-subagent-shield-widget') && n.style && n.style.display === 'none' && (n.textContent||'').includes('🛡')),
+    dot: [...document.body.children].some(n => n !== document.getElementById('dsh-subagent-shield-widget') && n.style && n.style.display === 'none' && (n.textContent||'').includes('🚧')),
     title: document.title,
     scripts: [...document.querySelectorAll('script[src]')].map(s => s.getAttribute('src')).filter(Boolean),
     htmlLen: (document.documentElement.outerHTML || '').length,
@@ -254,7 +254,7 @@ try {
 
   // ── 8. 设置页里的独立分区（只有完整版才有）
   //    两个坑，都踩过：
-  //    ① 浮窗标题本身就是「🛡 信息隔断」→ 不摘掉它，任何"设置页里有信息隔断"的检索
+  //    ① 浮窗标题本身就是「🚧 信息隔断」→ 不摘掉它，任何"设置页里有信息隔断"的检索
   //       都是假阳性（display:none 不够，那种元素 innerText 会回落成 textContent）。
   //    ② 那个「设置」按钮**没有文字**，只有 aria-label="设置" → 按文字找永远找不到。
   const removed = await evalJs(`(() => { const w = document.getElementById('dsh-subagent-shield-widget'); if (w) { w.remove(); return true } return false })()`)
