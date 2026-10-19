@@ -694,7 +694,7 @@ try {
   {
     const warnCall = {
       name: 'pwsh',
-      args: { command: "node -e require('fs').readFileSync('C:/tmp/x')" },
+      args: { command: '$z=[Convert]::FromBase64String("QzpcVGVzdA=="); [Text.Encoding]::UTF8.GetString($z)' },
       agent: { session: { header: { id: 'sub-warn-1', origin: 'subagent', delegationDepth: 1, parentSession: 'w1' } } },
     }
     let passedW = false
@@ -735,8 +735,8 @@ try {
     const bodyA = rootA?.children?.[1]
     const alertA = bodyA?.children?.[0]
     check('U2', '★★ 有告警时红框显示（display=block）', alertA?.style?.display === 'block', 'display=' + String(alertA?.style?.display ?? ''))
-    check('U2', '★★ 红框文字点明「试图绕过」并带次数',
-      String(alertA?.textContent ?? '').includes('试图绕过') && String(alertA?.textContent ?? '').includes('2 次'),
+    check('U2', '★★ 红框文字点明「混淆痕迹」并带次数',
+      String(alertA?.textContent ?? '').includes('混淆痕迹') && String(alertA?.textContent ?? '').includes('2 次'),
       String(alertA?.textContent ?? '').slice(0, 90))
     check('U2', '★★ 红框带上原因与本地时间',
       String(alertA?.textContent ?? '').includes('base64') && /\d\d:\d\d:\d\d/.test(String(alertA?.textContent ?? '')),

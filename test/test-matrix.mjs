@@ -515,13 +515,18 @@ try {
       String(sh(`Get-Content -LiteralPath "${P1}"`, { caller: 'sub-b' })?.reason ?? '').slice(0, 64))
     check('M10 ★★ 命令族：列那个目录 → 拦',
       sh('Get-ChildItem "C:\\lab\\out" | Select-Object -ExpandProperty Name', { caller: 'sub-b' })?.kind === 'owned')
-    check('M10 ★★ 命令族：只写"最后两段"（不带盘符）也拦得住',
-      sh('type out\\a.js', { caller: 'sub-b' })?.kind === 'owned')
+    check('M10 ★★ 0.10.4 起：只写最后两段（不带盘符）→ 不再拦（曾误伤兄弟臂）',
+      !sh('type out\\a.js', { caller: 'sub-b' }))
     check('M10 命令族：它自己执行同样命令 → 放行', !sh(`Get-Content "${P1}"`, { caller: 'sub-a' }))
     check('M10 命令族：放行过的路径 → 放行',
       !sh(`Get-Content "${P1}"`, { caller: 'sub-b' }, { ownState: { version: 1, owned: OWN.owned, shared: ['C:\\lab\\out'] } }))
     check('M10 命令族：开关关掉就不管', !sh(`Get-Content "${P1}"`, { caller: 'sub-b' }, { autoOwnWrites: false }))
     check('M10 命令族：无关命令不受影响', !sh('Get-Date', { caller: 'sub-b' }))
+    // ★★ 0.10.4 回归（R5 六臂实测）：提到父目录 ≠ 目标就是那个目录
+    check('M10 ★★ 命令里出现过含他人产物的父目录 → 不连坐',
+      !sh('Get-ChildItem C:\\lab\\out\\arm1 -Force', { caller: 'sub-b' }))
+    check('M10 ★★ 但目标就是那个目录 → 仍然连坐',
+      sh('Get-ChildItem C:\\lab\\out -Force', { caller: 'sub-b' })?.kind === 'owned')
     // ★ 目录级连坐**只在「列/读」动作下**才拦 —— 否则在公共产物目录里批量校验自己的产物会被误伤（01 实测）
     check('M10 ★ 只提到那个目录、不做枚举 → 不拦（修误伤）',
       !sh('Set-Location "C:\\lab\\out"; Write-Output hello', { caller: 'sub-b' }),
@@ -647,11 +652,11 @@ try {
     {
       const r = mod.evaluateCall({
         name: 'pwsh',
-        args: { command: 'node -e require-js-fs-readFileSync-C-tmp-x' },
+        args: { command: '$z=[Convert]::FromBase64String("QzpcVGVzdA=="); [Text.Encoding]::UTF8.GetString($z)' },
         isSubagent: true, scope: 'subagents', home: HOME, auditFile: '', rules: {}, cats: {},
         guardShellText: true, autoOwnWrites: false,
       })
-      check('M10 ★★ 出现 readFileSync → 记为 warn（不拦）', Boolean(r?.warn) && r.reason === undefined)
+      check('M10 ★★ 出现 base64 解码 → 记为 warn（不拦）', Boolean(r?.warn) && r.reason === undefined)
       check('M10 warn 的 kind 是 bypass-suspect', r?.warn?.kind === 'bypass-suspect')
       check('M10 干净命令（无读盘 API）→ 不 warn',
         !mod.evaluateCall({
@@ -674,8 +679,8 @@ try {
         cp("$a='C:\\lab\\'; $b='臂X'; Get-ChildItem ($a+$b) -Force")?.kind === 'custom')
       check('M10 ★★ 回归：码点拼目录名 → 也必须拦',
         cp("$d=[char]0x81C2+[char]0x58; Get-ChildItem ('C:\\lab\\'+$d) -Force")?.kind === 'custom')
-      check('M10 ★★ 回归：裸目录名（相对路径）→ 也拦',
-        cp("Get-ChildItem .\\臂X -Force")?.kind === 'custom')
+      check('M10 ★★ 0.10.4 起：裸目录名（相对路径）→ 不再拦（只认完整路径）',
+        !cp("Get-ChildItem .\\臂X -Force"))
       check('M10 与受保护目录无关的命令 → 放行', !cp("Write-Output hello"))
       check('M10 ★★ 回归：$env:DSH_HOME 展开后按宿主目录拦',
         Boolean(mod.evaluateCall({
