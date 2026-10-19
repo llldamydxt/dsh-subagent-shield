@@ -17,7 +17,7 @@
  *   客体里取：  wget -O input.zip http://10.0.2.2:8899/input.zip
  */
 import { createServer } from 'node:http'
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync, realpathSync } from 'node:fs'
 import { join, normalize, sep } from 'node:path'
 
 const argv = process.argv.slice(2)
@@ -47,16 +47,33 @@ const TYPES = {
   '.js': 'text/javascript', '.mjs': 'text/javascript', '.iso': 'application/octet-stream',
 }
 
+// ★ 0.10.3：字面前缀比较挡不住 junction / 符号链接 ——
+//   `statSync`/`readFileSync` 会跟随 reparse point，于是在服务目录里放一个 junction
+//   就能读到目录外的文件（第三轮验证实测：GET /junc/… 返回 200 + 外部标记）✗
+//   修法：同时比较 **realpath**。
+let rootReal = ''
+try { rootReal = realpathSync(rootDir) } catch { rootReal = rootDir }
+
 const server = createServer((req, res) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { Allow: 'GET, HEAD' })
     return res.end('只读\n')
   }
-  const url = decodeURIComponent((req.url || '/').split('?')[0])
+  // ★ 0.10.3：`decodeURIComponent` 会对畸形百分号抛 URIError ——
+  //   之前没接住，一个 `GET /%` 就把整个 Node 进程打死（第三轮验证实测）✗
+  let url = '/'
+  try { url = decodeURIComponent((req.url || '/').split('?')[0]) }
+  catch { res.writeHead(400); return res.end('bad request\n') }
   const target = normalize(join(rootDir, url === '/' ? '' : url))
   // 目录穿越防护
   if (!(target === rootDir || target.startsWith(rootDir + sep))) {
     res.writeHead(403); return res.end('不在服务目录内\n')
+  }
+  // ★ 真实路径也要在服务目录内（挡住 junction / 符号链接）
+  let real = ''
+  try { real = realpathSync(target) } catch { }
+  if (real && !(real === rootReal || real.startsWith(rootReal + sep))) {
+    res.writeHead(403); return res.end('不在服务目录内（realpath）\n')
   }
   let st = null
   try { st = statSync(target) } catch { }

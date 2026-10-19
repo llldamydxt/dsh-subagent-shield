@@ -32,7 +32,9 @@ if (-not $DshHome) {
   elseif (Test-Path (Join-Path $HOME '.dsh')) { $DshHome = Join-Path $HOME '.dsh' }
 }
 Write-Host ''
-Write-Host 'dsh-subagent-shield · 升级后自检' -ForegroundColor Cyan
+Write-Host 'dsh-subagent-shield · 升级后自检（文件层面）' -ForegroundColor Cyan
+Write-Host '注意：本脚本只检查磁盘上的文件与配置，**不检查运行中的插件是否真的在拦**。' -ForegroundColor DarkGray
+Write-Host '      要证“真的在拦”，得拿一条已知应当被拦的样本去试（见 docs\绝对隔离验收单.md）。' -ForegroundColor DarkGray
 Write-Host ('DSH_HOME = ' + $DshHome)
 Write-Host ''
 
