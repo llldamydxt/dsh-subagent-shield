@@ -1,3 +1,23 @@
+## [0.9.9] — 2026-10-19
+
+### 文档：`docs/硬隔离怎么做.md` 把「VBox + Ubuntu VM」的实测配方写了进去
+
+这份文档原来写着"三条路都走不了（都需要管理员）"。**2026-10-18 实测走通了路 B 的变体**：
+本机 VirtualBox + 一台独立 Ubuntu 26.04 VM，**不需要管理员** ✓。
+
+新增 §3.1 配方与坑（全部是真踩过的）：
+
+| 坑 | 现象 / 教训 |
+|---|---|
+| 校验值拿错版本 | 拿 26.04 的 SHA256 比 26.04.1 的文件 → 误判"下载残缺" ✗ |
+| 图形控制器 VMSVGA | 内核刷屏 `vmwgfx ... unsupported hypervisor` + `SQUASHFS ... data probably corrupt`（**假象**）→ 换 VBoxSVGA 才好 ✓ |
+| 内存给 2 GB | 26.04 桌面黑屏 + 空转 + 不写盘 ✗ → 要 4 GB |
+| `--password` | 正确参数是 `--user-password` ✗ |
+| 没弹安装 ISO | 每次开机卡在 "Please remove the installation medium" ✗ |
+| 装 Guest Additions | 对隔离目标是**反效果**（它带剪贴板/分辨率共享通道）✗ |
+
+新增 §3.2：**VM 这条路的判据和账户法不同** —— 账户法是 `Access is denied`，VM 是 **`No such file or directory`**（更强）。
+给了三条在客体里直接敲的自检命令（`findmnt -t vboxsf` / `ls /media /mnt` / `ls ~/.dsh`）。
 ## [0.9.8] — 2026-10-17
 
 ### 新增：`tools/check-after-upgrade.ps1` —— DSH 升级后自检
