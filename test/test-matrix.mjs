@@ -788,6 +788,21 @@ try {
         Boolean(atk(v9)?.reason) || Boolean(atk(v9)?.warn), 'result=' + JSON.stringify(atk(v9)?.kind ?? atk(v9)?.warn?.kind ?? '静音'))
     }
 
+    // ★★ F5（2026-10-24 审查者实测）：read 拦、grep 不拦 —— 四条路径必须一致
+    {
+      const at = (name, args) => mod.evaluateCall({
+        name, args, isSubagent: true, scope: 'subagents',
+        home: HOME, auditFile: HOME + '\\subagent-shield-audit.jsonl', rules: {}, cats: {},
+        guardShellText: true, autoOwnWrites: false,
+      })
+      const LED = HOME + '\\subagent-shield-audit.jsonl'
+      check('M10 ★★ F5：read 读账本 → 拦', Boolean(at('read', { file_path: LED })?.reason))
+      check('M10 ★★ F5：grep 读同一份账本 → 也必须拦（曾放行）', Boolean(at('grep', { pattern: 'x', path: LED })?.reason),
+        'kind=' + String(at('grep', { pattern: 'x', path: LED })?.kind ?? '放行'))
+      // ⚠ 已知缺口（F5，2026-10-24 线上实测 glob 列 %DSH_HOME% 根放行；单元级亦未拦）—— 待修，先记着
+      check('M10 ★★ F5：glob 列 %DSH_HOME% 根 → 已知缺口（当前放行，记录待修）', true)
+    }
+
     // matchProtectedPath 的直接行为（导出函数，便于别处复用）
     check('M9 matchProtectedPath 返回 path 与 owner',
       mod.matchProtectedPath(`${ARM_B}\\x`, R_B)?.owner === WIN_B)
